@@ -1,5 +1,6 @@
 #include "orbit.h"
 
+#include <stdlib.h>
 #define _GNU_SOURCE
 #include <unistd.h>
 #include <sys/syscall.h>
@@ -10,7 +11,7 @@
 #define SYS_ORBIT_RETURN 438
 
 
-struct obModule *obCreate(const char *module_name UNUSED, obEntry entry_func) {
+struct obModule *obCreate(const char *module_name /* UNUSED */, obEntry entry_func) {
 	struct obModule *ob;
 	unsigned long obid, ret;
 	void *arg = NULL;
@@ -30,7 +31,7 @@ struct obModule *obCreate(const char *module_name UNUSED, obEntry entry_func) {
 		syscall(SYS_ORBIT_RETURN, 0);
 		
 		/* TODO: allow the child to stop */
-		while (true) {
+		while (1) {
 			ret = entry_func(arg);
 			syscall(SYS_ORBIT_RETURN, ret);
 		}
@@ -51,7 +52,7 @@ unsigned long obCall(struct obModule *module, struct obPool* pool, void *aux) {
 }
 
 /* Return a memory allocation pool. */
-struct obPool *obPoolCreate(size_t init_pool_size, /* int raw = 0 */ ) {
+struct obPool *obPoolCreate(size_t init_pool_size /*, int raw = 0 */ ) {
 	struct obPool *pool;
 	void *area;
 

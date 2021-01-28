@@ -1,7 +1,9 @@
 #ifndef __ORBIT_H__
 #define __ORBIT_H__
 
-typedef (unsigned long)(*obEntry)(void*);
+#include <stddef.h>
+
+typedef unsigned long(*obEntry)(void*);
 
 struct obModule {
 	unsigned long obid;    // module id used by syscalls
@@ -17,7 +19,7 @@ struct obPool {
 };
 
 
-struct obModule *obCreate(const char *module_name UNUSED, obEntry entry_func);
+struct obModule *obCreate(const char *module_name /* UNUSED */, obEntry entry_func);
 // void obDestroy(obModule*);
 
 // syscall: orbit_create, 0 args, return obid
@@ -33,7 +35,7 @@ unsigned long obCall(struct obModule *module, struct obPool* pool, void *aux);
 // void obCallWrapper(obEntry entry_point, void *auxptr);
 
 /* Return a memory allocation pool. */
-struct obPool *obPoolCreate(size_t init_pool_size, /* int raw = 0 */ );
+struct obPool *obPoolCreate(size_t init_pool_size /*, int raw = 0 */ );
 // void obPoolDestroy(pool);
 
 // syscall: orbit_pool_create(pages)
