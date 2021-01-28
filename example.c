@@ -15,11 +15,14 @@ void test_plus_one() {
 
 	pool = obPoolCreate(4096);
 	assert(pool != NULL);
-	m = obCreate("test_module", checker_plus_one);
-	assert(m != NULL);
 
 	obj = (int *)pool->rawptr;
 	*obj = 100;
+
+	m = obCreate("test_module", checker_plus_one);
+	assert(m != NULL);
+
+	*obj = 200;
 
 	sleep(1);
 

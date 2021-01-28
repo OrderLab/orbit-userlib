@@ -1,6 +1,9 @@
 #include "orbit.h"
 
+#include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <string.h>
 #define _GNU_SOURCE
 #include <unistd.h>
 #include <sys/syscall.h>
@@ -22,6 +25,7 @@ struct obModule *obCreate(const char *module_name /* UNUSED */, obEntry entry_fu
 	obid = syscall(SYS_ORBIT_CREATE, &arg);
 	if (obid == -1) {
 		free(ob);
+		printf("syscall failed with errno: %s\n", strerror(errno));
 		return NULL;
 	} else if (obid == 0) {
 		/* We are now in child, we should run the function  */
@@ -59,7 +63,7 @@ struct obPool *obPoolCreate(size_t init_pool_size /*, int raw = 0 */ ) {
 	pool = (struct obPool*)malloc(sizeof(struct obPool));
 	if (pool == NULL) return NULL;
 
-	area = mmap(NULL, init_pool_size, PROT_READ | PROT_WRITE,
+	area = mmap((void*)0x7ffffff, init_pool_size, PROT_READ | PROT_WRITE,
 			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (area == NULL) {
 		free(pool);
@@ -69,6 +73,6 @@ struct obPool *obPoolCreate(size_t init_pool_size /*, int raw = 0 */ ) {
 	pool->rawptr = area;
 	pool->length = init_pool_size;
 
-	return area;
+	return pool;
 }
 // void obPoolDestroy(pool);
