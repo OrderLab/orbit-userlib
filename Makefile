@@ -2,6 +2,8 @@
 
 SRC = orbit.c example.c
 
+LDFLAGS = -static -pthread
+
 all: example
 
 %.d: %.c

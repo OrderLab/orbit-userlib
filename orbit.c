@@ -9,9 +9,14 @@
 #include <sys/syscall.h>
 #include <sys/mman.h>
 
-#define SYS_ORBIT_CREATE 436
-#define SYS_ORBIT_CALL   437
-#define SYS_ORBIT_RETURN 438
+#define SYS_ORBIT_CREATE	436
+#define SYS_ORBIT_CALL		437
+#define SYS_ORBIT_RETURN	438
+#define SYS_ORBIT_SEND		439
+#define SYS_ORBIT_RECV		440
+
+/* Orbit flags */
+#define ORBIT_ASYNC	1
 
 
 struct obModule *obCreate(const char *module_name /* UNUSED */, obEntry entry_func) {
@@ -50,9 +55,39 @@ struct obModule *obCreate(const char *module_name /* UNUSED */, obEntry entry_fu
 // void obDestroy(obModule*);
 
 unsigned long obCall(struct obModule *module, struct obPool* pool, void *aux) {
-	return syscall(SYS_ORBIT_CALL, module->obid,
+	return syscall(SYS_ORBIT_CALL, 0, module->obid,
 			pool->rawptr, pool->rawptr + pool->length,
 			module->entry_func, aux);
+}
+
+struct obTask *obCallAsync(struct obModule *module, struct obPool* pool, void *aux) {
+	long ret;
+	struct obTask *task = malloc(sizeof(struct obTask));
+	if (task == NULL)
+		return NULL;
+
+	ret = syscall(SYS_ORBIT_CALL, ORBIT_ASYNC, module->obid,
+			pool->rawptr, pool->rawptr + pool->length,
+			module->entry_func, aux);
+
+	printf("In obCallAsync, ret=%ld\n", ret);
+
+	if (ret < 0) {
+		free(task);
+		return NULL;
+	}
+
+	task->taskid = ret;
+
+	return task;
+}
+
+unsigned long obSendUpdate(const struct obUpdate *update) {
+	return syscall(SYS_ORBIT_SEND, update);
+}
+
+unsigned long obRecvUpdate(struct obTask *task, struct obUpdate *update) {
+	return syscall(SYS_ORBIT_RECV, task->obid, task->taskid, update);
 }
 
 /* Return a memory allocation pool. */

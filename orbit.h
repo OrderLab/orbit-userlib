@@ -18,6 +18,22 @@ struct obPool {
 	/* ... other metadata */
 };
 
+// typedef int(*obCallback)(struct obUpdate*);
+
+struct obTask {
+	unsigned long obid;
+	unsigned long taskid;
+	// obCallback callback;
+};
+
+#define ORBIT_BUFFER_MAX 1024	/* Maximum buffer size of orbit_update data field */
+
+/* Information of how and what to update, received from chcecker */
+struct obUpdate {
+	void *ptr;
+	size_t length;
+	char data[];
+};
 
 struct obModule *obCreate(const char *module_name /* UNUSED */, obEntry entry_func);
 // void obDestroy(obModule*);
@@ -28,7 +44,13 @@ struct obModule *obCreate(const char *module_name /* UNUSED */, obEntry entry_fu
 // assume we now only share a single pool with snapshot
 unsigned long obCall(struct obModule *module, struct obPool* pool, void *aux);
 
+struct obTask *obCallAsync(struct obModule *module, struct obPool* pool, void *aux);
+
 // syscall: orbit_call(int obid, entry_point, auxptr)
+
+// Functions to send updates in the checker and receive in the main program.
+unsigned long obSendUpdate(const struct obUpdate *update);
+unsigned long obRecvUpdate(struct obTask *task, struct obUpdate *update);
 
 /* User land runtime function that will be called by the kernel in orbit
  * context and will then call the real function. We do not really need....*/
