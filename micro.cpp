@@ -89,15 +89,20 @@ void bench_empty_async() {
 	printf("ob recv returned %d, data = 0x%x\n", ret, *(unsigned int*)update->data);
 
 	auto duration = duration_cast<nanoseconds>(t2 - t1).count();
-	printf("checker call %d times takes %ld ns\n", N, duration);
+	printf("checker call %d times takes %ld ns, %.2f ops\n", N, duration,
+		(double)N / duration * 1000000000);
 }
 
-int main() {
+int main(int argc, char *argv[]) {
 	char c;
 
-	//bench_empty();
-	bench_empty_async();
+	if (argc == 2 && !strcmp(argv[1], "-a"))
+		bench_empty_async();
+	else
+		bench_empty();
 
+	return 0;
 	printf("type anything to exit...");
 	scanf("%c", &c);
+	return 0;
 }

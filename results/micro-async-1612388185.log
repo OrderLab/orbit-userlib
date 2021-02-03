@@ -1,0 +1,30 @@
+test0
+ob recv returned 0, data = 0xdeadbeef
+checker call 1000000 times takes 3583203047 ns, 279079.91 ops
+test1
+ob recv returned 0, data = 0xdeadbeef
+checker call 1000000 times takes 3657272675 ns, 273427.79 ops
+test2
+ob recv returned 0, data = 0xdeadbeef
+checker call 1000000 times takes 3669300104 ns, 272531.54 ops
+test3
+ob recv returned 0, data = 0xdeadbeef
+checker call 1000000 times takes 3675051681 ns, 272105.02 ops
+test4
+ob recv returned 0, data = 0xdeadbeef
+checker call 1000000 times takes 3706373530 ns, 269805.51 ops
+test5
+ob recv returned 0, data = 0xdeadbeef
+checker call 1000000 times takes 3777269241 ns, 264741.52 ops
+test6
+ob recv returned 0, data = 0xdeadbeef
+checker call 1000000 times takes 3639755477 ns, 274743.73 ops
+test7
+ob recv returned 0, data = 0xdeadbeef
+checker call 1000000 times takes 3613087004 ns, 276771.64 ops
+test8
+ob recv returned 0, data = 0xdeadbeef
+checker call 1000000 times takes 3814740875 ns, 262141.00 ops
+test9
+ob recv returned 0, data = 0xdeadbeef
+checker call 1000000 times takes 3750988694 ns, 266596.38 ops

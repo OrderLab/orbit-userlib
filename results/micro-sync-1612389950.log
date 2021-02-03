@@ -1,0 +1,20 @@
+test0
+checker call 1000000 times takes 16125002104 ns
+test1
+checker call 1000000 times takes 20074378291 ns
+test2
+checker call 1000000 times takes 19968842560 ns
+test3
+checker call 1000000 times takes 20154887554 ns
+test4
+checker call 1000000 times takes 19950619082 ns
+test5
+checker call 1000000 times takes 20261597661 ns
+test6
+checker call 1000000 times takes 19997202981 ns
+test7
+checker call 1000000 times takes 20254538324 ns
+test8
+checker call 1000000 times takes 20048100994 ns
+test9
+checker call 1000000 times takes 20229634337 ns
