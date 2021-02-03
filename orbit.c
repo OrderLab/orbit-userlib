@@ -104,6 +104,32 @@ struct obPool *obPoolCreate(size_t init_pool_size /*, int raw = 0 */ ) {
 	pool->rawptr = area;
 	pool->length = init_pool_size;
 
+	pool->allocated = 0;
+
 	return pool;
 }
 // void obPoolDestroy(pool);
+
+/* TODO: currently we are ony using a linear allocating mechanism.
+ * In the future we will need to design an allocation algorithm aiming for
+ * compactness of related data. */
+void *obPoolAllocate(struct obPool *pool, size_t size)
+{
+	void *ptr;
+
+	if (!(pool->allocated + size < pool->length)) {
+		printf("Pool %p is full.\n", pool);
+		return NULL;
+	}
+
+	ptr = (char*)pool->rawptr + pool->allocated;
+
+	pool->allocated += size;
+
+	return ptr;
+}
+
+void obPoolDeallocate(struct obPool *pool, void *ptr, size_t size)
+{
+	/* Let it leak. */
+}

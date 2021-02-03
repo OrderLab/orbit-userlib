@@ -20,6 +20,7 @@ struct obPool {
 	size_t length;	// the pool should be page-aligned
 	// bool raw;  // true to enable the following API, false to be used as raw memory segments.
 	/* ... other metadata */
+	size_t allocated;	/* linear allocator */
 };
 
 // typedef int(*obCallback)(struct obUpdate*);
@@ -69,12 +70,8 @@ unsigned long obRecvUpdate(struct obTask *task, struct obUpdate *update);
 struct obPool *obPoolCreate(size_t init_pool_size /*, int raw = 0 */ );
 // void obPoolDestroy(pool);
 
-// syscall: orbit_pool_create(pages)
-// in the kernel implementation, this will be almost the same function as
-// `clone()`.
-
-// ptr = pool.allocate(size);
-// pool.deallocate(ptr);
+void *obPoolAllocate(struct obPool *pool, size_t size);
+void obPoolDeallocate(struct obPool *pool, void *ptr, size_t size);
 
 #ifdef __cplusplus
 }
