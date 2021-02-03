@@ -3,6 +3,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef unsigned long(*obEntry)(void*);
 
 struct obModule {
@@ -44,7 +48,12 @@ struct obModule *obCreate(const char *module_name /* UNUSED */, obEntry entry_fu
 // assume we now only share a single pool with snapshot
 unsigned long obCall(struct obModule *module, struct obPool* pool, void *aux);
 
-struct obTask *obCallAsync(struct obModule *module, struct obPool* pool, void *aux);
+/*
+ * Create an async orbit call.
+ * If the call succeeds and `task` is not NULL, task information will be stored in `task`.
+ * Return 0 on success. Other value indicates failure.
+ */
+int obCallAsync(struct obModule *module, struct obPool* pool, void *aux, struct obTask *task);
 
 // syscall: orbit_call(int obid, entry_point, auxptr)
 
@@ -67,5 +76,8 @@ struct obPool *obPoolCreate(size_t init_pool_size /*, int raw = 0 */ );
 // ptr = pool.allocate(size);
 // pool.deallocate(ptr);
 
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __ORBIT_H__ */

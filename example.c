@@ -88,16 +88,17 @@ void test_plus_one_async(int recv_thread) {
 
 	*obj = 200;
 
-	struct obTask *task = obCallAsync(m, pool, obj);
+	struct obTask task;
+	ret = obCallAsync(m, pool, obj, &task);
 
-	printf("In parent, we returned immediately %p, %ld\n", task, task->taskid);
+	printf("In parent, we returned immediately %p, %ld\n", &task, task.taskid);
 
 	if (recv_thread) {
 		pthread_t thd;
-		pthread_create(&thd, NULL, recv_worker, task);
+		pthread_create(&thd, NULL, recv_worker, &task);
 		pthread_join(thd, NULL);
 	} else {
-		recv_worker(task);
+		recv_worker(&task);
 	}
 }
 

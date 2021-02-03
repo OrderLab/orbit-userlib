@@ -60,26 +60,22 @@ unsigned long obCall(struct obModule *module, struct obPool* pool, void *aux) {
 			module->entry_func, aux);
 }
 
-struct obTask *obCallAsync(struct obModule *module, struct obPool* pool, void *aux) {
+int obCallAsync(struct obModule *module, struct obPool* pool, void *aux, struct obTask *task) {
 	long ret;
-	struct obTask *task = malloc(sizeof(struct obTask));
-	if (task == NULL)
-		return NULL;
 
 	ret = syscall(SYS_ORBIT_CALL, ORBIT_ASYNC, module->obid,
 			pool->rawptr, pool->rawptr + pool->length,
 			module->entry_func, aux);
 
-	printf("In obCallAsync, ret=%ld\n", ret);
+	// printf("In obCallAsync, ret=%ld\n", ret);
 
-	if (ret < 0) {
-		free(task);
-		return NULL;
-	}
+	if (ret < 0)
+		return ret;
 
-	task->taskid = ret;
+	if (task)
+		task->taskid = ret;
 
-	return task;
+	return 0;
 }
 
 unsigned long obSendUpdate(const struct obUpdate *update) {
