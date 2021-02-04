@@ -3,42 +3,26 @@
 
 #include <stddef.h>
 
+#define OB_BLOCK (4096*2)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef unsigned long(*obEntry)(void*);
 
-struct obModule {
-	unsigned long obid;    // module id used by syscalls
-	obEntry entry_func;
-	// TODO
-};
+struct obModule;
 
-struct obPool {
-	void *rawptr;
-	size_t length;	// the pool should be page-aligned
-	// bool raw;  // true to enable the following API, false to be used as raw memory segments.
-	/* ... other metadata */
-	size_t allocated;	/* linear allocator */
-};
+struct obPool;
 
 // typedef int(*obCallback)(struct obUpdate*);
 
-struct obTask {
-	unsigned long obid;
-	unsigned long taskid;
-	// obCallback callback;
-};
+struct obTask;
 
 #define ORBIT_BUFFER_MAX 1024	/* Maximum buffer size of orbit_update data field */
 
 /* Information of how and what to update, received from chcecker */
-struct obUpdate {
-	void *ptr;
-	size_t length;
-	char data[];
-};
+struct obUpdate;
 
 struct obModule *obCreate(const char *module_name /* UNUSED */, obEntry entry_func);
 // void obDestroy(obModule*);

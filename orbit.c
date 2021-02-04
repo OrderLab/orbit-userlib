@@ -9,6 +9,8 @@
 #include <sys/syscall.h>
 #include <sys/mman.h>
 
+#include <stdatomic.h>
+
 #define SYS_ORBIT_CREATE	436
 #define SYS_ORBIT_CALL		437
 #define SYS_ORBIT_RETURN	438
@@ -18,6 +20,33 @@
 /* Orbit flags */
 #define ORBIT_ASYNC	1
 
+
+struct obModule {
+	unsigned long obid;    // module id used by syscalls
+	obEntry entry_func;
+	// TODO
+};
+
+struct obPool {
+	void *rawptr;
+	size_t length;	// the pool should be page-aligned
+	// bool raw;  // true to enable the following API, false to be used as raw memory segments.
+	/* ... other metadata */
+	atomic_ulong right;
+	atomic_ulong left;
+};
+
+struct obTask {
+	unsigned long obid;
+	unsigned long taskid;
+	// obCallback callback;
+};
+
+struct obUpdate {
+	void *ptr;
+	size_t length;
+	char data[];
+};
 
 struct obModule *obCreate(const char *module_name /* UNUSED */, obEntry entry_func) {
 	struct obModule *ob;
@@ -104,7 +133,8 @@ struct obPool *obPoolCreate(size_t init_pool_size /*, int raw = 0 */ ) {
 	pool->rawptr = area;
 	pool->length = init_pool_size;
 
-	pool->allocated = 0;
+	atomic_init(&pool->right, OB_BLOCK);
+	atomic_init(&pool->left, 0);
 
 	return pool;
 }
@@ -115,21 +145,36 @@ struct obPool *obPoolCreate(size_t init_pool_size /*, int raw = 0 */ ) {
  * compactness of related data. */
 void *obPoolAllocate(struct obPool *pool, size_t size)
 {
-	void *ptr;
+	unsigned long right, left, new_right;
 
-	if (!(pool->allocated + size < pool->length)) {
-		printf("Pool %p is full.\n", pool);
-		return NULL;
-	}
+	do {
 
-	ptr = (char*)pool->rawptr + pool->allocated;
+		right = atomic_load(&pool->right);
+		left = atomic_load(&pool->left);
 
-	pool->allocated += size;
+		if (0 && left == right) {
+			printf("Pool %p is full.\n", pool);
+			return NULL;
+		}
 
-	return ptr;
+		new_right = (right + OB_BLOCK == pool->length) ?
+					0 : right + OB_BLOCK;
+
+	} while (!atomic_compare_exchange_strong(&pool->right, &right, new_right));
+
+	return (char*)pool->rawptr + right;
 }
 
 void obPoolDeallocate(struct obPool *pool, void *ptr, size_t size)
 {
-	/* Let it leak. */
+	unsigned long left, new_left;
+
+	do {
+
+		left = atomic_load(&pool->left);
+
+		new_left = (left + OB_BLOCK == pool->length) ?
+					0 : left + OB_BLOCK;
+
+	} while (!atomic_compare_exchange_strong(&pool->left, &left, new_left));
 }
