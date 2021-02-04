@@ -45,7 +45,7 @@ void bench_empty() {
 
 unsigned long checker_empty_async(void *obj) {
 	if (*(int*)obj == N) {
-		struct obUpdate *update = (struct obUpdate*)(obj+sizeof(int));
+		struct obUpdate *update = (struct obUpdate*)((int*)obj+1);
 		update->ptr = obj;
 		update->length = sizeof(int);
 		*(unsigned int*)update->data = 0xdeadbeef;
@@ -72,6 +72,10 @@ void bench_empty_async() {
 	struct obTask task;
 	struct obUpdate *update = (struct obUpdate*)malloc(sizeof(struct obUpdate) + ORBIT_BUFFER_MAX);
 	for (int i = 0; i < N; ++i) {
+		/* Ideally, all arguments should not overlap. Now we need to
+		 * at least ensure the sentinel obj is snapshotted correctly. */
+		if (i == N - 1)
+			++obj;
 		*obj = i + 1;
 		ret = obCallAsync(m, pool, obj, &task);
 		if (ret != 0) {

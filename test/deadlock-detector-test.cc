@@ -122,9 +122,12 @@ DeadlockChecker::get_next_lock(const lock_t* lock, ulint heap_no) {
 }
 
 /* Sleeps for 1ms and returns a random lock from a random trx */
-const lock_t*
+const lock_t* __attribute__((optimize("O0")))
 DeadlockChecker::get_first_lock(ulint* heap_no) {
-    std::this_thread::sleep_for (std::chrono::milliseconds(1));
+    //std::this_thread::sleep_for (std::chrono::nanoseconds(1));
+    /* This can yield ~30% overhead on the testing machine. */
+    for (int i = 0; i < 2000; ++i)
+        ;
     trx_t* rand_trx = trxs[rand() % NUM_TRANSACTIONS];
     return rand_trx->locks[rand() % NUM_LOCKS];
 }
@@ -172,22 +175,33 @@ struct checker_args {
 	lock_t *lock;
 	trx_t *trx;
 	trx_t **trxs;
+	int last;
 };
 
 /* Original definition:
  * const trx_t* check_and_resolve(const lock_t* lock, trx_t* trx);
  */
-unsigned long check_and_resolve(void *args) {
+unsigned long check_and_resolve(void *args_) {
 	const trx_t *victim_trx;
-	lock_t *lock	= ((checker_args*)args)->lock;
-	trx_t *trx	= ((checker_args*)args)->trx;
-	trx_t **trxs	= ((checker_args*)args)->trxs;
+	checker_args *args = (checker_args*)args_;
 
+	char buffer[sizeof(struct obUpdate) + sizeof(int)];
+	struct obUpdate *update = (struct obUpdate*)buffer;
+
+	/* This can yield ~30% overhead on the testing machine. */
+	srand(223);
 	/* Try and resolve as many deadlocks as possible. */
 	do {
-		DeadlockChecker	checker(trxs, trx, lock, 0);
+		DeadlockChecker	checker(args->trxs, args->trx, args->lock, 0);
 		victim_trx = checker.search();
 	} while (victim_trx != NULL);
+
+	if (args->last) {
+		update->ptr = NULL;
+		update->length = sizeof(int);
+		*(unsigned int *)update->data = 0xdeadbeef;
+		obSendUpdate(update);
+	}
 
 	return (unsigned long)victim_trx;
 }
@@ -213,7 +227,7 @@ struct trx_t **initialize_data(struct obPool *pool) {
 
 /* Simulates work by mySQL by sleeping */
 void perform_work() {
-    std::this_thread::sleep_for (std::chrono::seconds(1));
+    std::this_thread::sleep_for (std::chrono::milliseconds(1));
 }
 
 int main() {
@@ -223,30 +237,74 @@ int main() {
 
     struct obModule *m = obCreate("test_module", check_and_resolve);
 
-    struct checker_args *args = (struct checker_args*)obPoolAllocate(pool, sizeof(struct checker_args));
-    args->trxs = trxs;
+    /* Ideally, all arguments should not overlap. Now we need to
+     * at least ensure the sentinel obj is snapshotted correctly. */
+    struct checker_args *args_default = (struct checker_args*)obPoolAllocate(pool, sizeof(struct checker_args));
+    struct checker_args *args_last = (struct checker_args*)obPoolAllocate(pool, sizeof(struct checker_args));
+    struct checker_args *args = args_default;
+    args_default->trxs = args_last->trxs = trxs;
 
-    /* Randomly start with the first trx and lock */
-    int counter = 0;
-    for(;;) {
+    const int N = 100000;
+    int ret = 0;
+
+    int do_check = 0;
+    int use_orbit = 0;
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+
+    struct obTask task;
+    struct obUpdate *update = (struct obUpdate*)malloc(sizeof(struct obUpdate) + ORBIT_BUFFER_MAX);
+    for(int count = 0, lap = 1; count < N; ++count, ++lap) {
 
         perform_work();
-        counter += 1;
 
-        int secret = rand() % 5;
+        // int secret = rand() % 5;
 
         /* Calls the deadlock detector 1/5 times on average */
-        if (secret == 0) {
-            auto t1 = std::chrono::high_resolution_clock::now();
+        if (do_check && lap == 5) {
+	    if (count == N - 1)
+		args = args_last;
 
-            args->trx = trxs[rand() % NUM_TRANSACTIONS];
-            args->lock = args->trx->locks[rand() % NUM_LOCKS];
-            obCall(m, pool, args);
+            args->trx = trxs[0];
+            args->lock = args->trx->locks[0];
+            // args->trx = trxs[rand() % NUM_TRANSACTIONS];
+            // args->lock = args->trx->locks[rand() % NUM_LOCKS];
+	    if (use_orbit) {
+		    args->last = (count == N - 1);
+		    int ret = obCallAsync(m, pool, args, &task);
+		    if (ret != 0) {
+			std::cout << "orbit async call failed";
+			return 1;
+		    }
+	    } else {
+		    args->last = 0;
+		    // obCall(m, pool, args);
+		    check_and_resolve(args);
+	    }
+	    if (0 && count % 1000 == 999) {
+		    auto t2 = std::chrono::high_resolution_clock::now();
+		    auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>( t2 - t1 ).count();
+		    std::cout << count << " " << duration << std::endl;
+	    }
 
-            auto t2 = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>( t2 - t1 ).count();
-            std::cout << "Deadlock Detector called after " << counter << " seconds, ran for " << duration << " milliseconds" << std::endl;
-            counter = 0;
+            lap = 0;
         }
     }
+
+    auto t2 = std::chrono::high_resolution_clock::now();
+    if (do_check && use_orbit)
+        ret = obRecvUpdate(&task, update);
+    auto t3 = std::chrono::high_resolution_clock::now();
+    if (ret != 0) {
+        std::cout << "ob recv returned " << ret << std::endl;
+	return 1;
+    }
+
+    auto duration1 = std::chrono::duration_cast<std::chrono::nanoseconds>( t2 - t1 ).count();
+    auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>( t3 - t1 ).count();
+
+    std::cout << "Run " << N << " times takes " << duration1 << " ns, " << ((double)N/duration1*1000000000) << std::endl;
+    std::cout << "Run " << N << " times takes " << duration2 << " ns, " << ((double)N/duration2*1000000000) << std::endl;
+
+    return 0;
 }
