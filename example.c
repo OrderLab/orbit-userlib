@@ -36,6 +36,12 @@ unsigned long checker_plus_one_async(void *obj) {
 	return 0;
 }
 
+unsigned long checker_plus_one_commit(void *obj) {
+	*(int*)obj += 1;
+	orbit_commit();
+	return *(int*)obj;
+}
+
 void test_plus_one() {
 	struct obPool *pool;
 	struct obModule *m;
@@ -102,6 +108,34 @@ void test_plus_one_async(int recv_thread) {
 	}
 }
 
+void test_plus_one_async_commit() {
+	struct obPool *pool;
+	struct obModule *m;
+	int *obj, ret;
+
+	pool = obPoolCreate(4096);
+	assert(pool != NULL);
+
+	obj = (int *)pool->rawptr;
+	*obj = 100;
+
+	m = obCreate("test_module", checker_plus_one_commit);
+	assert(m != NULL);
+
+	for (int i = 200; i <= 1000; i += 100) {
+		*obj = i;
+
+		struct obTask task;
+		ret = obCallAsync(m, pool, obj, &task);
+
+		printf("In parent, we returned immediately %p, %ld\n", &task, task.taskid);
+
+		sleep(1);
+
+		printf("Parent slept for 1 second, get *obj = %d\n", *obj);
+	}
+}
+
 void test_multiple_plus_one() {
 	struct obPool *pool;
 	struct obModule *m;
@@ -150,9 +184,11 @@ int main() {
 	char c;
 
 	//test_plus_one();
-	test_plus_one_async(1);
+	//test_plus_one_async(1);
 	//test_multiple_plus_one();
 	// test_fail();
+
+	test_plus_one_async_commit();
 
 	printf("type anything to exit...");
 	scanf("%c", &c);

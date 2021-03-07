@@ -5,8 +5,11 @@
 #include <cstdlib>
 #include <iostream>
 #include <chrono>
+#include <unistd.h>
 
 #include "orbit.h"
+
+using namespace std::chrono;
 
 typedef uint64_t ib_uint64_t;
 typedef unsigned long int	ulint;
@@ -19,6 +22,7 @@ static const ulint MAX_STACK_SIZE = 4096;
 struct trx_t {
     // std::vector<struct lock_t *> locks;
     struct lock_t **locks;
+    int modifiable_field;
 };
 
 struct lock_t {
@@ -147,11 +151,11 @@ DeadlockChecker::search()
 			pop(lock, heap_no);
 			lock = get_next_lock(lock, heap_no);
 		}
-        
-        if (lock == NULL) 
-            break;
 
-        else if (lock == m_wait_lock) {
+		if (lock == NULL) 
+			break;
+
+		else if (lock == m_wait_lock) {
 			lock = NULL;
 
 		} else if (!lock_has_to_wait(m_wait_lock, lock)) {
@@ -167,7 +171,7 @@ DeadlockChecker::search()
 			lock = get_next_lock(lock, heap_no);
 		}
 	}
- 
+
 	return(0);
 }
 
@@ -213,6 +217,7 @@ struct trx_t **initialize_data(struct obPool *pool) {
     for (int i = 0; i < NUM_TRANSACTIONS; ++i) {
         struct trx_t* trx = (struct trx_t*)obPoolAllocate(pool, sizeof(*trx));
         trx->locks = (struct lock_t**)obPoolAllocate(pool, sizeof(*trx->locks) * NUM_LOCKS);
+        trx->modifiable_field = 0;
 
         for (int j = 0; j < NUM_LOCKS; ++j) {
             struct lock_t* lock = (struct lock_t*)obPoolAllocate(pool, sizeof(*lock));
@@ -230,7 +235,7 @@ void perform_work() {
     std::this_thread::sleep_for (std::chrono::milliseconds(1));
 }
 
-int main() {
+int run_async() {
     struct obPool *pool = obPoolCreate(4096 * 16);
 
     struct trx_t **trxs = initialize_data(pool);
@@ -307,4 +312,229 @@ int main() {
     std::cout << "Run " << N << " times takes " << duration2 << " ns, " << ((double)N/duration2*1000000000) << std::endl;
 
     return 0;
+}
+
+unsigned long check_and_resolve_commit(void *args_) {
+	trx_t *victim_trx;
+	checker_args *args = (checker_args*)args_;
+
+	/* This can yield ~30% overhead on the testing machine. */
+	srand(223);
+	/* Try and resolve as many deadlocks as possible. */
+	do {
+		DeadlockChecker	checker(args->trxs, args->trx, args->lock, 0);
+		victim_trx = (trx_t *)checker.search();
+
+		/* Mock modification */
+		if (victim_trx)
+			victim_trx->modifiable_field = 100;
+	} while (victim_trx != NULL);
+
+	args->trx->modifiable_field = 100;
+	args->trxs[20]->modifiable_field = 100;
+
+	std::cout << "In orbit, checking finished" << std::endl;
+
+	orbit_commit();
+
+	return (unsigned long)victim_trx;
+}
+
+int run_commit() {
+	struct obPool *pool = obPoolCreate(4096 * 16);
+
+	struct trx_t **trxs = initialize_data(pool);
+
+	struct obModule *m = obCreate("test_module", check_and_resolve_commit);
+
+	/* Ideally, all arguments should not overlap. Now we need to
+	 * at least ensure the sentinel obj is snapshotted correctly. */
+	struct checker_args *args_default = (struct checker_args*)obPoolAllocate(pool, sizeof(struct checker_args));
+	struct checker_args *args_last = (struct checker_args*)obPoolAllocate(pool, sizeof(struct checker_args));
+	struct checker_args *args = args_default;
+	args_default->trxs = args_last->trxs = trxs;
+
+	const int N = 1;
+	int ret = 0;
+
+	int do_check = 1;
+	int use_orbit = 1;
+
+	auto t1 = high_resolution_clock::now();
+
+	struct obTask task;
+	for(int count = 0, lap = 1; count < N; ++count, ++lap) {
+
+		perform_work();
+
+		// int secret = rand() % 5;
+
+		/* Calls the deadlock detector 1/5 times on average */
+		if (do_check) {
+		// if (do_check && lap == 5) {
+			if (count == N - 1)
+				args = args_last;
+
+			args->trx = trxs[0];
+			args->lock = args->trx->locks[0];
+			// args->trx = trxs[rand() % NUM_TRANSACTIONS];
+			// args->lock = args->trx->locks[rand() % NUM_LOCKS];
+			if (use_orbit) {
+				args->last = (count == N - 1);
+				int ret = obCallAsync(m, pool, args, &task);
+				if (ret != 0) {
+					std::cout << "orbit async call failed";
+					return 1;
+				}
+			} else {
+				args->last = 0;
+				// obCall(m, pool, args);
+				check_and_resolve(args);
+			}
+			if (0 && count % 1000 == 999) {
+				auto t2 = high_resolution_clock::now();
+				auto duration = duration_cast<nanoseconds>( t2 - t1 ).count();
+				std::cout << count << " " << duration << std::endl;
+			}
+
+			lap = 0;
+		}
+	}
+
+	// auto t2 = high_resolution_clock::now();
+	if (do_check && use_orbit) {
+		sleep(1);
+
+		std::cout << "Main program slept for 1s." << std::endl;
+
+		for (int i = 0; i < NUM_TRANSACTIONS; ++i) {
+			if (trxs[i]->modifiable_field == 100) {
+				std::cout << "\tFound trx " << i << " modified "
+					"to 100." << std::endl;
+			}
+		}
+	}
+
+	return 0;
+}
+
+/* === sendv/recvv === */
+
+struct orbit_scratch scratch;
+
+unsigned long check_and_resolve_sendv(void *args_) {
+	trx_t *victim_trx;
+	checker_args *args = (checker_args*)args_;
+
+	/* This can yield ~30% overhead on the testing machine. */
+	srand(223);
+	/* Try and resolve as many deadlocks as possible. */
+	do {
+		DeadlockChecker	checker(args->trxs, args->trx, args->lock, 0);
+		victim_trx = (trx_t *)checker.search();
+	} while (victim_trx != NULL);
+
+	/* Mock modification */
+	args->trx->modifiable_field = 100;
+	orbit_scratch_push_update(&scratch, &args->trx->modifiable_field, 4);
+
+	args->trxs[20]->modifiable_field = 100;
+	orbit_scratch_push_update(&scratch, &args->trxs[20]->modifiable_field, 4);
+
+	std::cout << "In orbit, checking finished" << std::endl;
+
+	int ret = orbit_sendv(&scratch);
+	std::cout << ret << std::endl;
+
+	return (unsigned long)victim_trx;
+}
+
+int run_sendv() {
+	struct obPool *pool = obPoolCreate(4096 * 16);
+	orbit_scratch_create(&scratch, 4096);
+
+	struct trx_t **trxs = initialize_data(pool);
+
+	struct obModule *m = obCreate("test_module", check_and_resolve_sendv);
+
+	/* Ideally, all arguments should not overlap. Now we need to
+	 * at least ensure the sentinel obj is snapshotted correctly. */
+	struct checker_args *args_default = (struct checker_args*)obPoolAllocate(pool, sizeof(struct checker_args));
+	struct checker_args *args_last = (struct checker_args*)obPoolAllocate(pool, sizeof(struct checker_args));
+	struct checker_args *args = args_default;
+	args_default->trxs = args_last->trxs = trxs;
+
+	const int N = 1;
+	int ret = 0;
+
+	int do_check = 1;
+	int use_orbit = 1;
+
+	auto t1 = high_resolution_clock::now();
+
+	struct obTask task;
+	for(int count = 0, lap = 1; count < N; ++count, ++lap) {
+
+		perform_work();
+
+		// int secret = rand() % 5;
+
+		/* Calls the deadlock detector 1/5 times on average */
+		if (do_check) {
+		// if (do_check && lap == 5) {
+			if (count == N - 1)
+				args = args_last;
+
+			args->trx = trxs[0];
+			args->lock = args->trx->locks[0];
+			// args->trx = trxs[rand() % NUM_TRANSACTIONS];
+			// args->lock = args->trx->locks[rand() % NUM_LOCKS];
+			if (use_orbit) {
+				args->last = (count == N - 1);
+				int ret = obCallAsync(m, pool, args, &task);
+				if (ret != 0) {
+					std::cout << "orbit async call failed";
+					return 1;
+				}
+			} else {
+				args->last = 0;
+				// obCall(m, pool, args);
+				check_and_resolve(args);
+			}
+			if (0 && count % 1000 == 999) {
+				auto t2 = high_resolution_clock::now();
+				auto duration = duration_cast<nanoseconds>( t2 - t1 ).count();
+				std::cout << count << " " << duration << std::endl;
+			}
+
+			lap = 0;
+		}
+	}
+
+	struct orbit_scratch scratch_result;
+
+	// auto t2 = high_resolution_clock::now();
+	if (do_check && use_orbit) {
+		int ret = orbit_recvv(&scratch_result, &task);
+
+		std::cout << "Main program received recvv ret " << ret << std::endl;
+
+		orbit_apply(&scratch_result);
+
+		for (int i = 0; i < NUM_TRANSACTIONS; ++i) {
+			if (trxs[i]->modifiable_field == 100) {
+				std::cout << "\tFound trx " << i << " modified "
+					"to 100." << std::endl;
+			}
+		}
+	}
+
+	return 0;
+}
+
+
+int main() {
+	// run_async();
+	// run_commit();
+	run_sendv();
 }

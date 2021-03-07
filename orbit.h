@@ -62,6 +62,9 @@ int obCallAsync(struct obModule *module, struct obPool* pool, void *aux, struct 
 unsigned long obSendUpdate(const struct obUpdate *update);
 unsigned long obRecvUpdate(struct obTask *task, struct obUpdate *update);
 
+/* Page level granularity update */
+unsigned long orbit_commit(void);
+
 /* User land runtime function that will be called by the kernel in orbit
  * context and will then call the real function. We do not really need....*/
 // void obCallWrapper(obEntry entry_point, void *auxptr);
@@ -72,6 +75,26 @@ struct obPool *obPoolCreate(size_t init_pool_size /*, int raw = 0 */ );
 
 void *obPoolAllocate(struct obPool *pool, size_t size);
 void obPoolDeallocate(struct obPool *pool, void *ptr, size_t size);
+
+typedef unsigned long(*orbit_operation_func)(size_t, unsigned long[]);
+
+/* Encoded orbit updates and operations. */
+struct orbit_scratch {
+	void *ptr;
+	size_t cursor;
+	size_t size_limit;
+	size_t count;	/* Number of elements */
+};
+
+int orbit_scratch_create(struct orbit_scratch *s, size_t init_size);
+// void orbit_scratch_free(orbit_scratch *s);
+
+int orbit_scratch_push_operation(struct orbit_scratch *s,
+		orbit_operation_func func, size_t argc, unsigned long argv[]);
+int orbit_scratch_push_update(struct orbit_scratch *s, void *ptr, size_t length);
+int orbit_sendv(struct orbit_scratch *s);
+int orbit_recvv(struct orbit_scratch *s, struct obTask *task);
+int orbit_apply(struct orbit_scratch *s);
 
 #ifdef __cplusplus
 }

@@ -14,6 +14,9 @@
 #define SYS_ORBIT_RETURN	438
 #define SYS_ORBIT_SEND		439
 #define SYS_ORBIT_RECV		440
+#define SYS_ORBIT_COMMIT	441
+#define SYS_ORBIT_SENDV		442
+#define SYS_ORBIT_RECVV		443
 
 /* Orbit flags */
 #define ORBIT_ASYNC	1
@@ -37,6 +40,7 @@ struct obModule *obCreate(const char *module_name /* UNUSED */, obEntry entry_fu
 
 		/* TODO: current a hack to return for the first time for
 		 * initialization. */
+		/* TODO: check return value? */
 		syscall(SYS_ORBIT_RETURN, 0);
 		
 		/* TODO: allow the child to stop */
@@ -86,6 +90,10 @@ unsigned long obRecvUpdate(struct obTask *task, struct obUpdate *update) {
 	return syscall(SYS_ORBIT_RECV, task->obid, task->taskid, update);
 }
 
+unsigned long orbit_commit(void) {
+	return syscall(SYS_ORBIT_COMMIT);
+}
+
 /* Return a memory allocation pool. */
 struct obPool *obPoolCreate(size_t init_pool_size /*, int raw = 0 */ ) {
 	struct obPool *pool;
@@ -94,7 +102,7 @@ struct obPool *obPoolCreate(size_t init_pool_size /*, int raw = 0 */ ) {
 	pool = (struct obPool*)malloc(sizeof(struct obPool));
 	if (pool == NULL) return NULL;
 
-	area = mmap((void*)0x7ffffff, init_pool_size, PROT_READ | PROT_WRITE,
+	area = mmap((void*)0x8000000, init_pool_size, PROT_READ | PROT_WRITE,
 			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (area == NULL) {
 		free(pool);
@@ -132,4 +140,147 @@ void *obPoolAllocate(struct obPool *pool, size_t size)
 void obPoolDeallocate(struct obPool *pool, void *ptr, size_t size)
 {
 	/* Let it leak. */
+}
+
+/* === sendv/recvv === */
+
+struct orbit_operation {
+	orbit_operation_func func;
+	size_t argc;
+	unsigned long argv[];	/* `void*` type argument */
+};
+
+struct orbit_update {
+	void *ptr;
+	size_t length;
+	char data[];
+};
+
+enum orbit_type { ORBIT_UPDATE, ORBIT_OPERATION, };
+
+struct orbit_repr {
+	enum orbit_type type;
+	union {
+		struct orbit_update update;
+		struct orbit_operation operation;
+	};
+};
+
+int orbit_scratch_create(struct orbit_scratch *s, size_t init_size)
+{
+	void *area;
+
+	area = mmap((void*)0x900000, init_size, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (area == NULL) return -1;
+
+	s->ptr = area;
+	s->size_limit = init_size;
+	s->cursor = 0;
+	s->count = 0;
+
+	return 0;
+}
+
+static inline size_t round_up_4(size_t value)
+{
+	size_t rem = value & 3;
+	return rem == 0 ? value : value + 4 - rem;
+}
+
+int orbit_scratch_push_update(struct orbit_scratch *s, void *ptr, size_t length)
+{
+	size_t rec_size = sizeof(struct orbit_repr) + length;
+
+	if (!(s->cursor + rec_size < s->size_limit))
+		return -1;	/* No enough space */
+
+	struct orbit_repr *record = (struct orbit_repr*)(s->ptr + s->cursor);
+
+	record->type = ORBIT_UPDATE;
+	record->update.ptr = ptr;
+	record->update.length = length;
+	memcpy(record->update.data, ptr, length);
+
+	s->cursor += rec_size;
+	s->cursor = round_up_4(s->cursor);
+
+	return ++s->count;
+}
+
+int orbit_scratch_push_operation(struct orbit_scratch *s,
+		orbit_operation_func func, size_t argc, unsigned long argv[])
+{
+	size_t length = argc * sizeof(*argv);
+	size_t rec_size = sizeof(struct orbit_repr) + length;
+
+	if (!(s->cursor + rec_size < s->size_limit))
+		return -1;	/* No enough space */
+
+	struct orbit_repr *record = (struct orbit_repr*)(s->ptr + s->cursor);
+
+	record->type = ORBIT_OPERATION;
+	record->operation.func = func;
+	record->operation.argc = argc;
+	memcpy(record->operation.argv, argv, length);
+
+	s->cursor += rec_size;
+	s->cursor = round_up_4(s->cursor);
+
+	return ++s->count;
+}
+
+int orbit_sendv(struct orbit_scratch *s)
+{
+	return syscall(SYS_ORBIT_SENDV, s);
+}
+
+int orbit_recvv(struct orbit_scratch *s, struct obTask *task)
+{
+	int ret = syscall(SYS_ORBIT_RECVV, s, task->taskid);
+	s->cursor = 0;
+	return ret;
+}
+
+int orbit_apply(struct orbit_scratch *s)
+{
+	const int DBG = 1;
+
+	if (DBG) fprintf(stderr, "Orbit: Applying scratch, total %lu\n", s->count);
+
+	while (s->count--) {
+		struct orbit_repr *record = (struct orbit_repr*)(s->ptr + s->cursor);
+
+		if (record->type == ORBIT_UPDATE) {
+			struct orbit_update *update = &record->update;
+			if (DBG) fprintf(stderr, "Orbit: Found update %p, %lu\n",
+					update->ptr, update->length);
+
+			memcpy(update->ptr, update->data, update->length);
+
+			s->cursor += sizeof(struct orbit_repr) + update->length;
+			s->cursor = round_up_4(s->cursor);
+		} else if (record->type == ORBIT_OPERATION) {
+			struct orbit_operation *op = &record->operation;
+			if (DBG) fprintf(stderr, "Orbit: Found operation %p, %lu\n",
+					op->func, op->argc);
+
+			/* TODO: send this back? */
+			unsigned long ret = op->func(op->argc, op->argv);
+			(void)ret;
+
+			s->cursor += sizeof(struct orbit_repr) + op->argc * sizeof(*op->argv);
+			s->cursor = round_up_4(s->cursor);
+		} else {
+			printf("unsupported update type: %d\n", record->type);
+			break;
+		}
+	}
+	return 0;
+}
+
+int orbit_recvv_finish(struct orbit_scratch *s)
+{
+	/* return munmap(s->ptr, s->size_limit); */
+	return 0;
 }
