@@ -2,30 +2,34 @@
 #define __ORBIT_H__
 
 #include <stddef.h>
+#include <pthread.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef unsigned long(*obEntry)(void*);
+#define ORBIT_NORETVAL		2
 
-struct obModule {
+typedef unsigned long(*orbit_entry)(void*);
+
+struct orbit_module {
 	unsigned long obid;    // module id used by syscalls
-	obEntry entry_func;
+	orbit_entry entry_func;
 	// TODO
 };
 
-struct obPool {
+struct orbit_pool {
 	void *rawptr;
 	size_t length;	// the pool should be page-aligned
 	// bool raw;  // true to enable the following API, false to be used as raw memory segments.
 	/* ... other metadata */
 	size_t allocated;	/* linear allocator */
+	pthread_spinlock_t	lock;	/* alloc needs to be thread-safe */
 };
 
-// typedef int(*obCallback)(struct obUpdate*);
+// typedef int(*obCallback)(struct orbit_update*);
 
-struct obTask {
+struct orbit_task {
 	unsigned long obid;
 	unsigned long taskid;
 	// obCallback callback;
@@ -34,47 +38,49 @@ struct obTask {
 #define ORBIT_BUFFER_MAX 1024	/* Maximum buffer size of orbit_update data field */
 
 /* Information of how and what to update, received from chcecker */
-struct obUpdate {
+struct orbit_update {
 	void *ptr;
 	size_t length;
 	char data[];
 };
 
-struct obModule *obCreate(const char *module_name /* UNUSED */, obEntry entry_func);
-// void obDestroy(obModule*);
+struct orbit_module *orbit_create(const char *module_name /* UNUSED */, orbit_entry entry_func);
+// void obDestroy(orbit_module*);
 
 // syscall: orbit_create, 0 args, return obid
 // entry_point is stored 
 
 // assume we now only share a single pool with snapshot
-unsigned long obCall(struct obModule *module, struct obPool* pool, void *aux);
+// unsigned long orbit_call(struct orbit_module *module, struct orbit_pool* pool, void *aux);
 
 /*
  * Create an async orbit call.
  * If the call succeeds and `task` is not NULL, task information will be stored in `task`.
  * Return 0 on success. Other value indicates failure.
  */
-int obCallAsync(struct obModule *module, struct obPool* pool, void *aux, struct obTask *task);
+int orbit_call_async(struct orbit_module *module, unsigned long flags,
+		size_t npool, struct orbit_pool** pool,
+		void *aux, struct orbit_task *task);
 
 // syscall: orbit_call(int obid, entry_point, auxptr)
 
 // Functions to send updates in the checker and receive in the main program.
-unsigned long obSendUpdate(const struct obUpdate *update);
-unsigned long obRecvUpdate(struct obTask *task, struct obUpdate *update);
+unsigned long orbit_send(const struct orbit_update *update);
+unsigned long orbit_recv(struct orbit_task *task, struct orbit_update *update);
 
 /* Page level granularity update */
 unsigned long orbit_commit(void);
 
 /* User land runtime function that will be called by the kernel in orbit
  * context and will then call the real function. We do not really need....*/
-// void obCallWrapper(obEntry entry_point, void *auxptr);
+// void obCallWrapper(orbit_entry entry_point, void *auxptr);
 
 /* Return a memory allocation pool. */
-struct obPool *obPoolCreate(size_t init_pool_size /*, int raw = 0 */ );
+struct orbit_pool *orbit_pool_create(size_t init_pool_size /*, int raw = 0 */ );
 // void obPoolDestroy(pool);
 
-void *obPoolAllocate(struct obPool *pool, size_t size);
-void obPoolDeallocate(struct obPool *pool, void *ptr, size_t size);
+void *orbit_pool_alloc(struct orbit_pool *pool, size_t size);
+void orbit_pool_free(struct orbit_pool *pool, void *ptr, size_t size);
 
 typedef unsigned long(*orbit_operation_func)(size_t, unsigned long[]);
 
@@ -86,14 +92,32 @@ struct orbit_scratch {
 	size_t count;	/* Number of elements */
 };
 
-int orbit_scratch_create(struct orbit_scratch *s, size_t init_size);
+union orbit_result {
+	unsigned long retval;
+	struct orbit_scratch scratch;
+};
+
+/* Get a scratch space.
+ * After each successful sendv(), the caller needs to call this again to
+ * allocate a new scratch space. */
+int orbit_scratch_create(struct orbit_scratch *s, size_t size_hint);
 // void orbit_scratch_free(orbit_scratch *s);
 
 int orbit_scratch_push_operation(struct orbit_scratch *s,
 		orbit_operation_func func, size_t argc, unsigned long argv[]);
 int orbit_scratch_push_update(struct orbit_scratch *s, void *ptr, size_t length);
+
+/* Return 0 on success, otherwise -1 and sets errno.
+ * Note: After success send, the scratch will not be accessible any more!
+ * If the send fails, this scratch is still accessible, and the caller can
+ * optionally update it and resend.
+ * If the caller decides not to send it, the caller needs to call create()
+ * again to request a new scratch space. */
 int orbit_sendv(struct orbit_scratch *s);
-int orbit_recvv(struct orbit_scratch *s, struct obTask *task);
+/* Returns 1 if update available, and modifies result->scratch;
+ * Returns 0 on end of updates, and modifies result->retval;
+ * Returns -1 on error, and sets errno. */
+int orbit_recvv(union orbit_result *result, struct orbit_task *task);
 int orbit_apply(struct orbit_scratch *s);
 
 #ifdef __cplusplus
