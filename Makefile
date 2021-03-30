@@ -2,12 +2,13 @@
 
 PROGS_C = example.c
 PROGS_CC = test/deadlock-detector-test.cc
-PROGS_CPP = micro.cpp
+PROGS_CPP = micro.cpp test/ttaslock.cpp
 LIB = orbit.c
 
+#DBGFLAGS = -g -ggdb3
 LINK.o = $(CXX) $(LDFLAGS) $(TARGET_ARCH)	# use c++ linker
-CFLAGS = -O2
-CXXFLAGS = -std=c++11 -O2
+CFLAGS = -O2 $(DBGFLAGS)
+CXXFLAGS = -std=c++11 -O2 $(DBGFLAGS)
 LDFLAGS = -pthread
 # Static linking with only -pthread will result in runtime segfault
 # (ip=NULL). Add the following flags to LDFLAGS if needed:
@@ -51,4 +52,4 @@ sinclude $(PROGS_CPP:%.cpp=%.d)
 sinclude $(LIB:%.c=%.d)
 
 clean:
-	rm -f $(binfiles) $(binfiles:%=%.d) $(binfiles:%=%.d)
+	rm -f $(binfiles) $(binfiles:%=%.o) $(binfiles:%=%.d) $(patsubst %.c,%.o,$(LIB))
