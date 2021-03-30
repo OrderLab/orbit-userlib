@@ -102,10 +102,20 @@ struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
 	return ob;
 }
 
+struct pool_range_kernel {
+	unsigned long start;
+	unsigned long end;
+};
+
 unsigned long orbit_call(struct orbit_module *module,
-		struct orbit_pool* pool, void *aux)
+		struct orbit_pool** pool, void *aux)
 {
-	return syscall(SYS_ORBIT_CALL, 0, module->obid, 1, &pool, aux);
+	struct pool_range_kernel pool_kernel = {
+		.start = (unsigned long)(*pool)->rawptr,
+		.end = (unsigned long)(*pool)->rawptr +
+			(unsigned long)round_up_page((*pool)->allocated),
+	};
+	return syscall(SYS_ORBIT_CALL, 0, module->obid, 1, &pool_kernel, aux);
 }
 
 int orbit_call_async(struct orbit_module *module, unsigned long flags,
@@ -114,8 +124,22 @@ int orbit_call_async(struct orbit_module *module, unsigned long flags,
 {
 	long ret;
 
+	/* This requries C99.  We can limit number of pools otherwise.*/
+	struct pool_range_kernel pools_kernel[npool];
+
+	for (size_t i = 0; i < npool; ++i) {
+		struct orbit_pool *pool = pools[i];
+		unsigned long start = (unsigned long)pool->rawptr;
+		/* TODO: directly using `allocated` is not actually safe.
+		 * However, if we hold all pool->lock until orbit_call ends,
+		 * it might be too long. */
+		unsigned long length = (unsigned long)round_up_page(pool->length);
+		pools_kernel[i].start = start;
+		pools_kernel[i].end = start + length;
+	}
+
 	ret = syscall(SYS_ORBIT_CALL, flags | ORBIT_ASYNC, module->obid,
-			npool, pools, aux);
+			npool, pools_kernel, aux);
 
 	// printf("In orbit_call_async, ret=%ld\n", ret);
 
