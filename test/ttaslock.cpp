@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
+#include <chrono>
 #include <iostream>
 #include <atomic>
 #include <pthread.h>
@@ -792,7 +794,7 @@ TTASEventMutex::signal() UNIV_NOTHROW
 	// sync_array_object_signalled();
 }
 
-#define NTHD 8
+#define NTHD 4
 
 struct orbit_pool *pool = orbit_pool_create(4096 * 4);
 
@@ -851,16 +853,16 @@ void *thread_func(void *aux) {
 		ret = orbit_recvv(&res, &task);
 		errno_assert("orbit_recvv", (ret == 0));
 
-		loop(10000 + rand() % 1000000);
+		std::this_thread::sleep_for(std::chrono::nanoseconds(10000 + rand() % 1000000));
 	}
 
 	return NULL;
 }
 
-int main() {
+int main(int argc, const char *argv[]) {
 	int ret;
 
-	int seed = time(NULL);
+	int seed = argc > 1 ? atoi(argv[1]) : time(NULL);
 	srand(seed);
 	os_event_global_init();
 
