@@ -2,6 +2,7 @@
 #define __ORBIT_H__
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <pthread.h>
 
 #ifdef __cplusplus
@@ -44,6 +45,32 @@ struct orbit_update {
 	char data[];
 };
 
+typedef unsigned long(*orbit_operation_func)(size_t, unsigned long[]);
+
+struct orbit_operation {
+	orbit_operation_func func;
+	size_t argc;
+	unsigned long argv[];	/* `void*` type argument */
+};
+
+struct orbit_any {
+	unsigned long length;
+	char data[];
+};
+
+enum orbit_type { ORBIT_END, ORBIT_UNKNOWN, ORBIT_ANY,
+		  ORBIT_UPDATE, ORBIT_OPERATION, };
+
+struct orbit_repr {
+	enum orbit_type type;
+	/* Maybe consider type safety of this union? */
+	union {
+		struct orbit_update update;
+		struct orbit_operation operation;
+		struct orbit_any any;
+	};
+};
+
 struct orbit_module *orbit_create(const char *module_name /* UNUSED */, orbit_entry entry_func);
 // void obDestroy(orbit_module*);
 
@@ -82,8 +109,6 @@ struct orbit_pool *orbit_pool_create(size_t init_pool_size /*, int raw = 0 */ );
 void *orbit_pool_alloc(struct orbit_pool *pool, size_t size);
 void orbit_pool_free(struct orbit_pool *pool, void *ptr, size_t size);
 
-typedef unsigned long(*orbit_operation_func)(size_t, unsigned long[]);
-
 /* Encoded orbit updates and operations. */
 struct orbit_scratch {
 	void *ptr;
@@ -106,6 +131,7 @@ int orbit_scratch_create(struct orbit_scratch *s, size_t size_hint);
 int orbit_scratch_push_operation(struct orbit_scratch *s,
 		orbit_operation_func func, size_t argc, unsigned long argv[]);
 int orbit_scratch_push_update(struct orbit_scratch *s, void *ptr, size_t length);
+int orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length);
 
 /* Return 0 on success, otherwise -1 and sets errno.
  * Note: After success send, the scratch will not be accessible any more!
@@ -118,7 +144,13 @@ int orbit_sendv(struct orbit_scratch *s);
  * Returns 0 on end of updates, and modifies result->retval;
  * Returns -1 on error, and sets errno. */
 int orbit_recvv(union orbit_result *result, struct orbit_task *task);
-int orbit_apply(struct orbit_scratch *s);
+
+enum orbit_type orbit_apply(struct orbit_scratch *s, bool yield);
+enum orbit_type orbit_apply_one(struct orbit_scratch *s, bool yield);
+enum orbit_type orbit_skip(struct orbit_scratch *s, bool yield);
+enum orbit_type orbit_skip_one(struct orbit_scratch *s, bool yield);
+
+struct orbit_repr *orbit_scratch_first(struct orbit_scratch *s);
 
 #ifdef __cplusplus
 }

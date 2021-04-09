@@ -237,22 +237,6 @@ void orbit_pool_free(struct orbit_pool *pool, void *ptr, size_t size)
 
 /* === sendv/recvv === */
 
-struct orbit_operation {
-	orbit_operation_func func;
-	size_t argc;
-	unsigned long argv[];	/* `void*` type argument */
-};
-
-enum orbit_type { ORBIT_UPDATE, ORBIT_OPERATION, };
-
-struct orbit_repr {
-	enum orbit_type type;
-	union {
-		struct orbit_update update;
-		struct orbit_operation operation;
-	};
-};
-
 int orbit_scratch_create(struct orbit_scratch *s, size_t size_hint)
 {
 	const int DBG = 0;
@@ -293,6 +277,26 @@ int orbit_scratch_push_update(struct orbit_scratch *s, void *ptr, size_t length)
 	record->update.ptr = ptr;
 	record->update.length = length;
 	memcpy(record->update.data, ptr, length);
+
+	s->cursor += rec_size;
+	s->cursor = round_up_4(s->cursor);
+
+	return ++s->count;
+}
+
+int orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length)
+{
+	struct orbit_repr *record;
+	size_t rec_size = sizeof(struct orbit_repr) + length;
+
+	if (!(s->cursor + rec_size < s->size_limit))
+		return -1;	/* No enough space */
+
+	record = (struct orbit_repr*)(s->ptr + s->cursor);
+
+	record->type = ORBIT_ANY;
+	record->any.length = length;
+	memcpy(record->any.data, ptr, length);
 
 	s->cursor += rec_size;
 	s->cursor = round_up_4(s->cursor);
@@ -370,45 +374,141 @@ int orbit_recvv(union orbit_result *result, struct orbit_task *task)
 	return ret;
 }
 
-int orbit_apply(struct orbit_scratch *s)
+enum orbit_type orbit_apply_one(struct orbit_scratch *s, bool yield)
 {
 	const int DBG = 0;
-
 	if (DBG) fprintf(stderr, "Orbit: Applying scratch, total %lu\n", s->count);
 
-	while (s->count--) {
-		struct orbit_repr *record = (struct orbit_repr*)(s->ptr + s->cursor);
+	if (s->count == 0)
+		return ORBIT_END;
 
-		if (record->type == ORBIT_UPDATE) {
-			struct orbit_update *update = &record->update;
-			if (DBG) fprintf(stderr, "Orbit: Found update %p, %lu\n",
-					update->ptr, update->length);
+	struct orbit_repr *record = (struct orbit_repr*)(s->ptr + s->cursor);
+	enum orbit_type type = record->type;
+	size_t extra_size = 0;
 
-			memcpy(update->ptr, update->data, update->length);
+	if (type == ORBIT_UPDATE) {
+		struct orbit_update *update = &record->update;
+		if (DBG) fprintf(stderr, "Orbit: Found update %p, %lu\n",
+				update->ptr, update->length);
 
-			s->cursor += sizeof(struct orbit_repr) + update->length;
-			s->cursor = round_up_4(s->cursor);
-		} else if (record->type == ORBIT_OPERATION) {
-			unsigned long ret;
-			struct orbit_operation *op = &record->operation;
+		memcpy(update->ptr, update->data, update->length);
 
-			if (DBG) fprintf(stderr, "Orbit: Found operation %p, %lu\n",
-					op->func, op->argc);
+		extra_size = update->length;
+	} else if (type == ORBIT_OPERATION) {
+		unsigned long ret;
+		struct orbit_operation *op = &record->operation;
 
-			/* TODO: send this back? */
-			ret = op->func(op->argc, op->argv);
-			(void)ret;
+		if (DBG) fprintf(stderr, "Orbit: Found operation %p, %lu\n",
+				op->func, op->argc);
 
-			s->cursor += sizeof(struct orbit_repr) + op->argc * sizeof(*op->argv);
-			s->cursor = round_up_4(s->cursor);
-		} else {
-			if (DBG) fprintf(stderr, "Orbit: unsupported update type: %d\n", record->type);
-			break;
-		}
+		/* TODO: send this back? */
+		ret = op->func(op->argc, op->argv);
+		(void)ret;
+
+		extra_size = op->argc * sizeof(*op->argv);
+	} else if (type == ORBIT_ANY) {
+		if (yield)
+			return ORBIT_ANY;
+		/* Otherwise, skip this data. */
+		extra_size = record->any.length;
+	} else if (type == ORBIT_END) {
+		extra_size = 0;
+	} else {
+		if (DBG) fprintf(stderr, "Orbit: unsupported update type: %d\n", record->type);
+
+		return ORBIT_UNKNOWN;
 	}
-	if (DBG) fprintf(stderr, "Orbit: Applied all scratch updates\n");
 
-	return 0;
+	s->cursor += sizeof(struct orbit_repr) + extra_size;
+	s->cursor = round_up_4(s->cursor);
+
+	--s->count;
+
+	if (DBG) fprintf(stderr, "Orbit: Applied one update normally\n");
+
+	return type;
+}
+
+enum orbit_type orbit_apply(struct orbit_scratch *s, bool yield)
+{
+	while (s->count) {
+		enum orbit_type type = orbit_apply_one(s, yield);
+
+		if ((type == ORBIT_END) || type == ORBIT_UNKNOWN ||
+			(type == ORBIT_ANY && yield))
+			return type;
+	}
+
+	return ORBIT_END;
+}
+
+enum orbit_type orbit_skip_one(struct orbit_scratch *s, bool yield)
+{
+	if (s->count == 0)
+		return ORBIT_END;
+
+	struct orbit_repr *record = (struct orbit_repr*)(s->ptr + s->cursor);
+	enum orbit_type type = record->type;
+	size_t extra_size;
+
+	switch (type) {
+	case ORBIT_UPDATE:
+		extra_size = record->update.length;
+		break;
+	case ORBIT_OPERATION:
+		extra_size = record->operation.argc *
+				sizeof(*record->operation.argv);
+		break;
+	case ORBIT_ANY:
+		if (yield)
+			return ORBIT_ANY;
+		extra_size = record->any.length;
+		break;
+	case ORBIT_END:
+		extra_size = 0;
+		break;
+	case ORBIT_UNKNOWN:
+	default:
+		return ORBIT_UNKNOWN;
+	}
+
+	s->cursor += sizeof(struct orbit_repr) + extra_size;
+	s->cursor = round_up_4(s->cursor);
+	--s->count;
+
+	return type;
+}
+
+enum orbit_type orbit_skip(struct orbit_scratch *s, bool yield)
+{
+	while (s->count) {
+		enum orbit_type type = orbit_skip_one(s, yield);
+
+		if (type == ORBIT_END || type == ORBIT_UNKNOWN ||
+			(type == ORBIT_ANY && yield))
+			return type;
+	}
+
+	return ORBIT_END;
+}
+
+struct orbit_repr *orbit_scratch_first(struct orbit_scratch *s)
+{
+	if (s->count == 0)
+		return NULL;
+
+	struct orbit_repr *record = (struct orbit_repr*)(s->ptr + s->cursor);
+
+	switch (record->type) {
+	case ORBIT_ANY:
+	case ORBIT_UPDATE:
+	case ORBIT_OPERATION:
+		return record;
+	case ORBIT_END:
+	case ORBIT_UNKNOWN:
+	default:
+		return NULL;
+	}
 }
 
 int orbit_recvv_finish(struct orbit_scratch *s)
