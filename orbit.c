@@ -59,12 +59,14 @@ static void info_init(void)
 	scratch_init();
 }
 
+unsigned long orbit_taskid;
+
 struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
 		orbit_entry entry_func)
 {
 	struct orbit_module *ob;
 	long syscall_ret;
-	unsigned long ret;
+	unsigned long ret = 0;
 	void *arg = NULL;
 
 	(void)module_name;
@@ -83,15 +85,12 @@ struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
 		// info_init();
 		(void)info_init;
 
-		/* TODO: current a hack to return for the first time for
-		 * initialization. */
-		/* TODO: check return value? */
-		syscall(SYS_ORBIT_RETURN, 0);
-		
 		/* TODO: allow the child to stop */
 		while (1) {
+			/* TODO: currently a hack to return for the first time
+			 * for initialization. */
+			orbit_taskid = syscall(SYS_ORBIT_RETURN, ret);
 			ret = entry_func(arg);
-			syscall(SYS_ORBIT_RETURN, ret);
 		}
 	}
 
@@ -108,19 +107,19 @@ struct pool_range_kernel {
 };
 
 unsigned long orbit_call(struct orbit_module *module,
-		struct orbit_pool** pool, void *aux)
+		struct orbit_pool** pool, void *arg, size_t argsize)
 {
 	struct pool_range_kernel pool_kernel = {
 		.start = (unsigned long)(*pool)->rawptr,
 		.end = (unsigned long)(*pool)->rawptr +
 			(unsigned long)round_up_page((*pool)->allocated),
 	};
-	return syscall(SYS_ORBIT_CALL, 0, module->obid, 1, &pool_kernel, aux);
+	return syscall(SYS_ORBIT_CALL, 0, module->obid, 1, &pool_kernel, arg, argsize);
 }
 
 int orbit_call_async(struct orbit_module *module, unsigned long flags,
 		size_t npool, struct orbit_pool** pools,
-		void *aux, struct orbit_task *task)
+		void *arg, size_t argsize, struct orbit_task *task)
 {
 	long ret;
 
@@ -133,13 +132,13 @@ int orbit_call_async(struct orbit_module *module, unsigned long flags,
 		/* TODO: directly using `allocated` is not actually safe.
 		 * However, if we hold all pool->lock until orbit_call ends,
 		 * it might be too long. */
-		unsigned long length = (unsigned long)round_up_page(pool->length);
+		unsigned long length = (unsigned long)round_up_page(pool->allocated);
 		pools_kernel[i].start = start;
 		pools_kernel[i].end = start + length;
 	}
 
 	ret = syscall(SYS_ORBIT_CALL, flags | ORBIT_ASYNC, module->obid,
-			npool, pools_kernel, aux);
+			npool, pools_kernel, arg, argsize);
 
 	// printf("In orbit_call_async, ret=%ld\n", ret);
 

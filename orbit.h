@@ -87,7 +87,7 @@ struct orbit_module *orbit_create(const char *module_name /* UNUSED */, orbit_en
  */
 int orbit_call_async(struct orbit_module *module, unsigned long flags,
 		size_t npool, struct orbit_pool** pool,
-		void *aux, struct orbit_task *task);
+		void *arg, size_t argsize, struct orbit_task *task);
 
 // syscall: orbit_call(int obid, entry_point, auxptr)
 
