@@ -165,19 +165,23 @@ unsigned long orbit_commit(void) {
 
 /* Return a memory allocation pool. */
 struct orbit_pool *orbit_pool_create(size_t init_pool_size /*, int raw = 0 */ ) {
+	const int DBG = 0;
+	const void *MMAP_HINT = DBG ? (void*)0x8000000 : NULL;
+	return orbit_pool_create_at(init_pool_size, MMAP_HINT);
+
+}
+
+struct orbit_pool *orbit_pool_create_at(size_t init_pool_size, void *addr) {
 	struct orbit_pool *pool;
 	void *area;
 	int ret;
-
-	const int DBG = 0;
-	void *MMAP_HINT = DBG ? (void*)0x8000000 : NULL;
 
 	init_pool_size = round_up_page(init_pool_size);
 
 	pool = (struct orbit_pool*)malloc(sizeof(struct orbit_pool));
 	if (pool == NULL) goto pool_malloc_fail;
 
-	area = mmap(MMAP_HINT, init_pool_size, PROT_READ | PROT_WRITE,
+	area = mmap(addr, init_pool_size, PROT_READ | PROT_WRITE,
 			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (area == NULL) goto mmap_fail;
 
@@ -203,7 +207,8 @@ pool_malloc_fail:
 /* TODO: currently we are ony using a linear allocating mechanism.
  * In the future we will need to design an allocation algorithm aiming for
  * compactness of related data. */
-void *orbit_pool_alloc(struct orbit_pool *pool, size_t size)
+void *__orbit_pool_alloc(struct orbit_pool *pool, size_t size,
+	const char *file, int line)
 {
 	void *ptr;
 	int ret;
@@ -222,6 +227,12 @@ void *orbit_pool_alloc(struct orbit_pool *pool, size_t size)
 	pool->allocated += size;
 
 	pthread_spin_unlock(&pool->lock);
+
+#define OUTPUT_ORBIT_ALLOC 0
+#if OUTPUT_ORBIT_ALLOC
+	void __mysql_orbit_alloc_callback(void *, size_t, const char *, int);
+	__mysql_orbit_alloc_callback(ptr, size, file, line);
+#endif
 
 	return ptr;
 }

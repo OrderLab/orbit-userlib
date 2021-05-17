@@ -104,9 +104,13 @@ unsigned long orbit_commit(void);
 
 /* Return a memory allocation pool. */
 struct orbit_pool *orbit_pool_create(size_t init_pool_size /*, int raw = 0 */ );
+struct orbit_pool *orbit_pool_create_at(size_t init_pool_size, void *addr);
 // void obPoolDestroy(pool);
 
-void *orbit_pool_alloc(struct orbit_pool *pool, size_t size);
+void *__orbit_pool_alloc(struct orbit_pool *pool, size_t size,
+			const char *file, int line);
+#define orbit_pool_alloc(pool, size) \
+	__orbit_pool_alloc(pool, size, __FILE__, __LINE__)
 void orbit_pool_free(struct orbit_pool *pool, void *ptr, size_t size);
 
 /* Encoded orbit updates and operations. */
