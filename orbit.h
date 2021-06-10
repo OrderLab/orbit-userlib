@@ -26,6 +26,7 @@ struct orbit_pool {
 	/* ... other metadata */
 	size_t allocated;	/* linear allocator */
 	pthread_spinlock_t	lock;	/* alloc needs to be thread-safe */
+	bool cow;
 };
 
 // typedef int(*obCallback)(struct orbit_update*);

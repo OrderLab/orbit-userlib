@@ -104,6 +104,7 @@ struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
 struct pool_range_kernel {
 	unsigned long start;
 	unsigned long end;
+	bool cow;
 };
 
 unsigned long orbit_call(struct orbit_module *module,
@@ -135,6 +136,7 @@ int orbit_call_async(struct orbit_module *module, unsigned long flags,
 		unsigned long length = (unsigned long)round_up_page(pool->allocated);
 		pools_kernel[i].start = start;
 		pools_kernel[i].end = start + length;
+		pools_kernel[i].cow = pool->cow;
 	}
 
 	ret = syscall(SYS_ORBIT_CALL, flags | ORBIT_ASYNC, module->obid,
@@ -190,6 +192,7 @@ struct orbit_pool *orbit_pool_create_at(size_t init_pool_size, void *addr) {
 
 	pool->rawptr = area;
 	pool->length = init_pool_size;
+	pool->cow = true;
 
 	pool->allocated = 0;
 
