@@ -104,6 +104,7 @@ unsigned long orbit_commit(void);
 
 /* Return a memory allocation pool. */
 struct orbit_pool *orbit_pool_create(size_t init_pool_size /*, int raw = 0 */ );
+struct orbit_pool *orbit_pool_create_at(size_t init_pool_size, void *addr);
 // void obPoolDestroy(pool);
 
 void *orbit_pool_alloc(struct orbit_pool *pool, size_t size);
