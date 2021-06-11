@@ -1,3 +1,6 @@
+/* Orbit microbenchmark that snapshots one page and triggers one page fault
+ * in the main program for every iteration. */
+
 #include "orbit.h"
 #include <pthread.h>
 #include <errno.h>
@@ -8,105 +11,118 @@
 #include <cstring>
 #include <chrono>
 
+#define likely(x)       __builtin_expect((x),1)
+#define unlikely(x)     __builtin_expect((x),0)
+
 using namespace std::chrono;
 
-#define N 1000000
-//#define N 100
+int N = 1000000;
 
-unsigned long checker_empty(void *obj) {
-	return (unsigned long)obj;
+unsigned long checker_empty(void *argbuf) {
+	/* pointer to an int in the pool */
+	int *obj = *(int**)argbuf;
+	return (unsigned int)*obj;
 }
 
 void bench_empty() {
-	struct obPool *pool;
-	struct obModule *m;
+	struct orbit_pool *pool;
+	struct orbit_module *m;
 	int *obj, ret;
 
-	pool = obPoolCreate(4096);
+	pool = orbit_pool_create(4096);
 	assert(pool != NULL);
 
-	obj = (int *)pool->rawptr;
+	obj = (int*)orbit_pool_alloc(pool, sizeof(int));
 	*obj = 100;
 
-	m = obCreate("test_module", checker_empty);
+	m = orbit_create("test_module", checker_empty);
 	assert(m != NULL);
 
 	auto t1 = high_resolution_clock::now();
 	for (int i = 0; i < N; ++i) {
 		*obj = i;
-		ret = obCall(m, pool, obj);
-		// printf("In parent: ret is %d, obj is %d\n", ret, *obj);
+		ret = orbit_call(m, 1, &pool, &obj, sizeof(obj));
+		if (unlikely(ret != i)) {
+			printf("In parent: i=%d, ret=%d, obj=%d\n", i, ret, *obj);
+			abort();
+		}
 	}
 	auto t2 = high_resolution_clock::now();
 
-	auto duration = duration_cast<nanoseconds>(t2 - t1).count();
-	printf("checker call %d times takes %ld ns\n", N, duration);
-}
-
-unsigned long checker_empty_async(void *obj) {
-	if (*(int*)obj == N) {
-		struct obUpdate *update = (struct obUpdate*)((int*)obj+1);
-		update->ptr = obj;
-		update->length = sizeof(int);
-		*(unsigned int*)update->data = 0xdeadbeef;
-		obSendUpdate(update);
-	}
-	return (unsigned long)obj;
+	long long duration = duration_cast<nanoseconds>(t2 - t1).count();
+	printf("checker call %d times takes %lld ns, %.2f ops\n", N, duration,
+		(double)N / duration * 1000000000LL);
 }
 
 void bench_empty_async() {
-	struct obPool *pool;
-	struct obModule *m;
+	struct orbit_pool *pool;
+	struct orbit_module *m;
 	int *obj, ret;
 
-	pool = obPoolCreate(4096);
+	pool = orbit_pool_create(4096);
 	assert(pool != NULL);
 
-	obj = (int *)pool->rawptr;
+	obj = (int*)orbit_pool_alloc(pool, sizeof(int));
 	*obj = 100;
 
-	m = obCreate("test_module", checker_empty_async);
+	m = orbit_create("test_module", checker_empty);
 	assert(m != NULL);
 
 	auto t1 = high_resolution_clock::now();
-	struct obTask task;
-	struct obUpdate *update = (struct obUpdate*)malloc(sizeof(struct obUpdate) + ORBIT_BUFFER_MAX);
-	for (int i = 0; i < N; ++i) {
-		/* Ideally, all arguments should not overlap. Now we need to
-		 * at least ensure the sentinel obj is snapshotted correctly. */
-		if (i == N - 1)
-			++obj;
-		*obj = i + 1;
-		ret = obCallAsync(m, pool, obj, &task);
-		if (ret != 0) {
-			printf("async obCall failed with %d\n", ret);
-			break;
+	for (int i = 0; i < N - 1; ++i) {
+		*obj = i;
+		ret = orbit_call_async(m, ORBIT_NORETVAL, 1, &pool, &obj, sizeof(obj), NULL);
+		if (unlikely(ret != 0)) {
+			printf("In parent: i=%d ret=%d, obj=0x%x\n", i, ret, *obj);
+			abort();
 		}
-		// printf("In parent: ret is %d, obj is %d\n", ret, *obj);
 	}
-	/* We do not wait on any former tasks, but instead reuse the last
-	 * task. Since the tasks are handled in FIFO, the last task will
-	 * send a sentinel update back (see checker_empty). */
-	ret = obRecvUpdate(&task, update);
+
+	*obj = 0xdeadbeef;
+	struct orbit_task task;
+	ret = orbit_call_async(m, 0, 1, &pool, &obj, sizeof(obj), &task);
+	assert(ret == 0);
+
+	/* We do not wait on any former tasks, but only the last task.
+	 * Since the tasks are handled in FIFO, the last task will
+	 * send a sentinel retval back (see checker_empty). */
+	union orbit_result result;
+	ret = orbit_recvv(&result, &task);
+
 	auto t2 = high_resolution_clock::now();
 
-	printf("ob recv returned %d, data = 0x%x\n", ret, *(unsigned int*)update->data);
+	long long duration = duration_cast<nanoseconds>(t2 - t1).count();
+	printf("checker call %d times takes %lld ns, %.2f ops\n", N, duration,
+		(double)N / duration * 1000000000LL);
 
-	auto duration = duration_cast<nanoseconds>(t2 - t1).count();
-	printf("checker call %d times takes %ld ns, %.2f ops\n", N, duration,
-		(double)N / duration * 1000000000);
+	printf("ob recvv returned %d, data = %lu\n", ret, result.retval);
+
+	assert(ret == 0);
+	assert(result.retval == 0xdeadbeef);
 }
 
 int main(int argc, char *argv[]) {
-	char c;
+	char **arg = argv + 1;
+	bool async = false;
 
-	if (argc == 2 && !strcmp(argv[1], "-a"))
+	if (*arg && !strcmp(*arg, "-a")) {
+		async = true;
+		++arg;
+	}
+	if (*arg) {
+		if (sscanf(*arg, "%d\n", &N) != 1) {
+			fprintf(stderr, "Usage: %s [-a]\n", argv[0]);
+			return 1;
+		}
+		if (N < 0)
+			N = 100;
+	}
+
+	printf("Benchmark with N = %d in %s mode\n", N, async ? "async" : "sync");
+
+	if (async)
 		bench_empty_async();
 	else
 		bench_empty();
-
-	return 0;
-	printf("type anything to exit...");
-	scanf("%c", &c);
 	return 0;
 }
