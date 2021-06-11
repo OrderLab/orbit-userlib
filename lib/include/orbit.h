@@ -11,7 +11,51 @@ extern "C" {
 
 #define ORBIT_NORETVAL		2
 
-typedef unsigned long(*orbit_entry)(void*);
+
+/*
+ * Orbit entry function signature.
+ *
+ * It is defined similar to pthread functions, but there are huge differences.
+ *
+ * The argbuf points to a buffer in orbit's address space.  The user can use
+ * any data representation they want in the buffer.
+ *
+ * For an original entry function that is defined as:
+ *
+ *     unsigned long func(int arg1, float arg2, char *arg3);
+ *
+ * To port to orbit, user is expected to define a custom arguments struct:
+ *
+ *     struct func_args {
+ *         int arg1;
+ *         float arg2;
+ *         char *arg3;
+ *     } args;
+ *
+ * This argument struct will be copied to the orbit's address space when
+ * calling orbit_call:
+ *
+ *     orbit_call(ob, ..., &args, sizeof(func_args));
+ *
+ * And the orbit entry function can be used as a wrapper function that extracts
+ * actual arguments from func_args and call the original function:
+ *
+ *     unsigned long func_orbit(void *argbuf) {
+ *         struct func_args *args = (struct func_args *)argbuf;
+ *         return func(args->arg1, args->arg2, args->arg3);
+ *     }
+ *
+ * Such kind of wrapper functions can also be generated using orbit compiler,
+ * or use some fancy tricks in languages with advanced type systems.
+ *
+ * Return value is defined as an unsigned integer.  You can still use it to
+ * represent negative values when calling in asynchronous mode.
+ *
+ * However, due to current implementation limitation, in synchronous orbit_call
+ * you can not use the MSB.  This can be fixed if we do not reuse the syscall
+ * return value as orbit_entry return value.
+ */
+typedef unsigned long(*orbit_entry)(void *argbuf);
 
 struct orbit_module {
 	unsigned long obid;    // module id used by syscalls
@@ -29,25 +73,38 @@ struct orbit_pool {
 	bool cow;
 };
 
-// typedef int(*obCallback)(struct orbit_update*);
+// typedef int(*orbit_callback)(struct orbit_update*);
 
 struct orbit_task {
 	unsigned long obid;
 	unsigned long taskid;
-	// obCallback callback;
+	// orbit_callback callback;
 };
 
 #define ORBIT_BUFFER_MAX 1024	/* Maximum buffer size of orbit_update data field */
 
-/* Information of how and what to update, received from chcecker */
+/*
+ * Information of where to update and what to update to.
+ *
+ * Data is a dynamically sized buffer that can contain anything.
+ */
 struct orbit_update {
 	void *ptr;
 	size_t length;
 	char data[];
 };
 
+/*
+ * We may later change this to accept (void*) instead of argc, argv.
+ */
 typedef unsigned long(*orbit_operation_func)(size_t, unsigned long[]);
 
+/*
+ * Information of operation to execute, just like a closure.
+ *
+ * Argv is a dynamically sized array that can contain arguments smaller than
+ * `long`.
+ */
 struct orbit_operation {
 	orbit_operation_func func;
 	size_t argc;
@@ -72,25 +129,37 @@ struct orbit_repr {
 	};
 };
 
+/*
+ * Spawn an orbit.
+ *
+ * Underlying syscall: orbit_create, 0 args, return obid.
+ * entry_func is stored in the orbit task handle loop.
+ */
 struct orbit_module *orbit_create(const char *module_name /* UNUSED */, orbit_entry entry_func);
 // void obDestroy(orbit_module*);
 
-// syscall: orbit_create, 0 args, return obid
-// entry_point is stored 
-
-// assume we now only share a single pool with snapshot
-// unsigned long orbit_call(struct orbit_module *module, struct orbit_pool* pool, void *aux);
+/*
+ * Create an orbit call.
+ *
+ * Note that for synchronous orbit_call, the entry_func cannot call orbit_send
+ * or orbit_sendv.
+ *
+ * Return non-negative values on success. Return -1 on error, and stores error
+ * code in `errno'.
+ */
+long orbit_call(struct orbit_module *module,
+		size_t npool, struct orbit_pool** pools,
+		void *arg, size_t argsize);
 
 /*
  * Create an async orbit call.
+ *
  * If the call succeeds and `task` is not NULL, task information will be stored in `task`.
  * Return 0 on success. Other value indicates failure.
  */
 int orbit_call_async(struct orbit_module *module, unsigned long flags,
-		size_t npool, struct orbit_pool** pool,
+		size_t npool, struct orbit_pool** pools,
 		void *arg, size_t argsize, struct orbit_task *task);
-
-// syscall: orbit_call(int obid, entry_point, auxptr)
 
 // Functions to send updates in the checker and receive in the main program.
 unsigned long orbit_send(const struct orbit_update *update);
