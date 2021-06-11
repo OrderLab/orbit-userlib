@@ -210,7 +210,8 @@ pool_malloc_fail:
 /* TODO: currently we are ony using a linear allocating mechanism.
  * In the future we will need to design an allocation algorithm aiming for
  * compactness of related data. */
-void *orbit_pool_alloc(struct orbit_pool *pool, size_t size)
+void *__orbit_pool_alloc(struct orbit_pool *pool, size_t size,
+	const char *file, int line)
 {
 	void *ptr;
 	int ret;
@@ -229,6 +230,12 @@ void *orbit_pool_alloc(struct orbit_pool *pool, size_t size)
 	pool->allocated += size;
 
 	pthread_spin_unlock(&pool->lock);
+
+#define OUTPUT_ORBIT_ALLOC 0
+#if OUTPUT_ORBIT_ALLOC
+	void __mysql_orbit_alloc_callback(void *, size_t, const char *, int);
+	__mysql_orbit_alloc_callback(ptr, size, file, line);
+#endif
 
 	return ptr;
 }
