@@ -13,4 +13,5 @@ add_executable(micro
 )
 target_link_libraries(micro
   PRIVATE orbit
+  Threads::Threads
 )

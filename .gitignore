@@ -45,6 +45,7 @@
 # Auto-completions
 .cquery_cache/
 .clangd/
+.cache/
 compile_commands.json
 
 # Editors
@@ -58,7 +59,6 @@ compile_commands.json
 # Build artifacts
 cmake-build-*/
 build/
-.cache/
 
 CMakeCache.txt
 CMakeFiles/
