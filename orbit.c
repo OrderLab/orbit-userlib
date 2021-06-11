@@ -109,20 +109,9 @@ struct pool_range_kernel {
 	bool cow;
 };
 
-unsigned long orbit_call(struct orbit_module *module,
-		struct orbit_pool** pool, void *arg, size_t argsize)
-{
-	struct pool_range_kernel pool_kernel = {
-		.start = (unsigned long)(*pool)->rawptr,
-		.end = (unsigned long)(*pool)->rawptr +
-			(unsigned long)round_up_page((*pool)->allocated),
-	};
-	return syscall(SYS_ORBIT_CALL, 0, module->obid, 1, &pool_kernel, arg, argsize);
-}
-
-int orbit_call_async(struct orbit_module *module, unsigned long flags,
+static long orbit_call_inner(struct orbit_module *module, unsigned long flags,
 		size_t npool, struct orbit_pool** pools,
-		void *arg, size_t argsize, struct orbit_task *task)
+		void *arg, size_t argsize)
 {
 	long ret;
 
@@ -141,17 +130,29 @@ int orbit_call_async(struct orbit_module *module, unsigned long flags,
 		pools_kernel[i].cow = pool->cow;
 	}
 
-	ret = syscall(SYS_ORBIT_CALL, flags | ORBIT_ASYNC, module->obid,
+	ret = syscall(SYS_ORBIT_CALL, flags, module->obid,
 			npool, pools_kernel, arg, argsize);
+	// printf("In orbit_call_inner, ret=%ld\n", ret);
+	return ret;
+}
 
-	// printf("In orbit_call_async, ret=%ld\n", ret);
+long orbit_call(struct orbit_module *module,
+		size_t npool, struct orbit_pool** pools,
+		void *arg, size_t argsize)
+{
+	return orbit_call_inner(module, 0, npool, pools, arg, argsize);
+}
 
+int orbit_call_async(struct orbit_module *module, unsigned long flags,
+		size_t npool, struct orbit_pool** pools,
+		void *arg, size_t argsize, struct orbit_task *task)
+{
+	long ret = orbit_call_inner(module, flags | ORBIT_ASYNC,
+			npool, pools, arg, argsize);
 	if (ret < 0)
 		return ret;
-
 	if (task)
 		task->taskid = ret;
-
 	return 0;
 }
 
