@@ -23,6 +23,8 @@
 /* Orbit flags */
 #define ORBIT_ASYNC	1
 
+#define ARG_SIZE_MAX 1024
+
 #define _define_round_up(base) \
 	static inline size_t round_up_##base(size_t value) { \
 		return (value + base - 1) & ~(base - 1); \
@@ -67,14 +69,14 @@ struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
 	struct orbit_module *ob;
 	long syscall_ret;
 	unsigned long ret = 0;
-	void *arg = NULL;
+	char argbuf[ARG_SIZE_MAX];
 
 	(void)module_name;
 
 	ob = (struct orbit_module*)malloc(sizeof(struct orbit_module));
 	if (ob == NULL) return NULL;
 
-	syscall_ret = syscall(SYS_ORBIT_CREATE, &arg);
+	syscall_ret = syscall(SYS_ORBIT_CREATE, argbuf);
 	if (syscall_ret == -1) {
 		free(ob);
 		printf("syscall failed with errno: %s\n", strerror(errno));
@@ -90,7 +92,7 @@ struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
 			/* TODO: currently a hack to return for the first time
 			 * for initialization. */
 			orbit_taskid = syscall(SYS_ORBIT_RETURN, ret);
-			ret = entry_func(arg);
+			ret = entry_func(argbuf);
 		}
 	}
 
@@ -168,7 +170,7 @@ unsigned long orbit_commit(void) {
 /* Return a memory allocation pool. */
 struct orbit_pool *orbit_pool_create(size_t init_pool_size /*, int raw = 0 */ ) {
 	const int DBG = 0;
-	const void *MMAP_HINT = DBG ? (void*)0x8000000 : NULL;
+	void *MMAP_HINT = DBG ? (void*)0x8000000 : NULL;
 	return orbit_pool_create_at(init_pool_size, MMAP_HINT);
 
 }
@@ -210,7 +212,8 @@ pool_malloc_fail:
 /* TODO: currently we are ony using a linear allocating mechanism.
  * In the future we will need to design an allocation algorithm aiming for
  * compactness of related data. */
-void *orbit_pool_alloc(struct orbit_pool *pool, size_t size)
+void *__orbit_pool_alloc(struct orbit_pool *pool, size_t size,
+	const char *file, int line)
 {
 	void *ptr;
 	int ret;
@@ -229,6 +232,15 @@ void *orbit_pool_alloc(struct orbit_pool *pool, size_t size)
 	pool->allocated += size;
 
 	pthread_spin_unlock(&pool->lock);
+
+#define OUTPUT_ORBIT_ALLOC 0
+#if OUTPUT_ORBIT_ALLOC
+	void __mysql_orbit_alloc_callback(void *, size_t, const char *, int);
+	__mysql_orbit_alloc_callback(ptr, size, file, line);
+#else
+	(void)file;
+	(void)line;
+#endif
 
 	return ptr;
 }
