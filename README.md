@@ -22,4 +22,5 @@ make
 
 The built objects, libraries, and executable are by default in the `build` directory.
 
-To generate a compilation database for code autocompletion, use tools like `bear` or `compiledb`.
+To generate a compilation database for code autocompletion, use tools like `bear` or `compiledb`, 
+e.g., `bear make`.
