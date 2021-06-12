@@ -52,6 +52,9 @@ compile_commands.json
 .idea/
 .vscode/
 
+# macOS
+.DS_Store
+
 # perf record data
 *.data
 *.data.*
