@@ -2,12 +2,6 @@
 
 ## Usage
 
-```bash
-make
-```
-
-The built objects, libraries, and executable are by default in the `build` directory.
-
 * With `cmake`:
 
 ```bash
@@ -16,5 +10,16 @@ cmake ..
 make -j$(nproc)
 ```
 
-The CMakeLists.txt enables outputting `compile_commands.json` by default for 
-code autocompletion.
+cmake directly supports generating compilation databases with the appropriate 
+flag. The CMakeLists.txt has turned on the flag to generate `compile_commands.json` 
+by default.
+
+* With `make`:
+
+```bash
+make
+```
+
+The built objects, libraries, and executable are by default in the `build` directory.
+
+To generate a compilation database for code autocompletion, use tools like `bear` or `compiledb`.
