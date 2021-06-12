@@ -806,7 +806,7 @@ void loop(int n) {
 
 
 unsigned long orbit_func(void *aux) {
-	std::atomic_uint64_t *counter = (std::atomic_uint64_t*)aux;
+	std::atomic_uint64_t *counter = *(std::atomic_uint64_t**)aux;
 	loop(1000);
 	counter->fetch_add(1);
 	loop(1000);
@@ -842,7 +842,8 @@ void *thread_func(void *aux) {
 		args->mutex->enter(srv_n_spin_wait_rounds, srv_spin_wait_delay, "", 0);
 
 		orbit_task task;
-		ret = orbit_call_async(args->ob, 0, 1, &pool, args->counter, &task);
+		ret = orbit_call_async(args->ob, 0, 1, &pool, &args->counter,
+				sizeof(args->counter), &task);
 		errno_assert("orbit_call_async", (ret == 0));
 
 		args->mutex->exit();
