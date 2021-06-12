@@ -1,16 +1,24 @@
-include ../common.mk
+SRCDIR := src
+OBJDIR := ../build/lib
+BINDIR := $(OBJDIR)
 
-sources	:= orbit.c
-objects	:= $(subst .c,.o,$(sources))
-deps := $(subst .c,.d,$(sources))
+sources	:= $(wildcard $(SRCDIR)/*.c)
+include_dirs := include $(SRCDIR)
 
-all: liborbit.a liborbit.so
-	@echo $(CFLAGS)
+include ../defs.mk
 
-liborbit.a: $(objects)
-	$(AR) $(ARFLAGS) $@ $^
+# for building the shared library
+CFLAGS += -fPIC
+bins := $(BINDIR)/liborbit.a $(BINDIR)/liborbit.so
 
-clean:
-	rm liborbit.a lib
+all: $(bins)
+
+$(BINDIR)/liborbit.a: $(OBJDIR)/orbit.o | $(BINDIR)
+	$(AR) -rc $@ $^
+
+$(BINDIR)/liborbit.so: $(OBJDIR)/orbit.o | $(BINDIR)
+	$(CC) -fPIC -shared $< -o $@
+
+include ../rules.mk
 
 .PHONY: all clean
