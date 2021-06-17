@@ -57,8 +57,22 @@ extern "C" {
  */
 typedef unsigned long(*orbit_entry)(void *argbuf);
 
+typedef int pid_t;
+typedef int obid_t;
+
+/*
+ * An orbit can be identified by either a <mpid, lobid> tuple or a <gobid>.
+ *
+ * <mpid> represents the main program the orbit is attached to.
+ * <lobid> is the orbit id local to the main program, and is not globally unique.
+ * <gobid> is the globally unique id assigned to an orbit.
+ */
+
 struct orbit_module {
-	unsigned long obid;    // module id used by syscalls
+	pid_t mpid; // PID of the main program
+	obid_t lobid; // orbit id local to a main program
+	pid_t gobid; // global orbit id, which can uniquely identify the kernel object
+
 	orbit_entry entry_func;
 	// TODO
 };
@@ -135,7 +149,8 @@ struct orbit_repr {
  * Underlying syscall: orbit_create, 0 args, return obid.
  * entry_func is stored in the orbit task handle loop.
  */
-struct orbit_module *orbit_create(const char *module_name /* UNUSED */, orbit_entry entry_func);
+struct orbit_module *orbit_create(const char *module_name,
+				  orbit_entry entry_func);
 // void obDestroy(orbit_module*);
 
 /*
