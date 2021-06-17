@@ -60,7 +60,7 @@ typedef unsigned long(*orbit_entry)(void *argbuf);
 typedef int pid_t;
 typedef int obid_t;
 
-typedef ORBIT_NAME_LEN 16
+#define ORBIT_NAME_LEN 16
 
 /*
  * An orbit can be identified by either a <mpid, lobid> tuple or a <gobid>.
