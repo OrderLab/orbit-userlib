@@ -60,6 +60,8 @@ typedef unsigned long(*orbit_entry)(void *argbuf);
 typedef int pid_t;
 typedef int obid_t;
 
+typedef ORBIT_NAME_LEN 16
+
 /*
  * An orbit can be identified by either a <mpid, lobid> tuple or a <gobid>.
  *
@@ -67,14 +69,13 @@ typedef int obid_t;
  * <lobid> is the orbit id local to the main program, and is not globally unique.
  * <gobid> is the globally unique id assigned to an orbit.
  */
-
 struct orbit_module {
 	pid_t mpid; // PID of the main program
 	obid_t lobid; // orbit id local to a main program
 	pid_t gobid; // global orbit id, which can uniquely identify the kernel object
 
 	orbit_entry entry_func;
-	// TODO
+	char name[ORBIT_NAME_LEN];
 };
 
 struct orbit_pool {

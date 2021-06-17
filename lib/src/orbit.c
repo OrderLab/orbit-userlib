@@ -96,7 +96,7 @@ struct orbit_module *orbit_create(const char *module_name,
 		}
 	}
 
-	printf("created orbit mpid %d, lobid %d, gobid %d>\n", mpid, lobid,
+	printf("Created orbit <mpid %d, lobid %d, gobid %d>\n", mpid, lobid,
 	       gobid);
 
 	/* Now we are in parent. */
@@ -104,7 +104,10 @@ struct orbit_module *orbit_create(const char *module_name,
 	ob->lobid = lobid;
 	ob->gobid = gobid;
 	ob->entry_func = entry_func;
-
+	if (module_name)
+		strncpy(ob->name, module_name, ORBIT_NAME_LEN);
+	else
+		strcpy(ob->name, "anonymous");
 	return ob;
 }
 
