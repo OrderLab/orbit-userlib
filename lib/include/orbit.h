@@ -203,6 +203,9 @@ union orbit_result {
 int orbit_scratch_create(struct orbit_scratch *s, size_t size_hint);
 // void orbit_scratch_free(orbit_scratch *s);
 
+struct orbit_pool *orbit_pool_from_scratch(struct orbit_scratch *scratch);
+int orbit_pool_conclude_scratch(struct orbit_scratch *scratch, struct orbit_pool *pool);
+
 int orbit_scratch_push_operation(struct orbit_scratch *s,
 		orbit_operation_func func, size_t argc, unsigned long argv[]);
 int orbit_scratch_push_update(struct orbit_scratch *s, void *ptr, size_t length);

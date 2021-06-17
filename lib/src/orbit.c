@@ -319,6 +319,54 @@ int orbit_scratch_create(struct orbit_scratch *s, size_t size_hint)
 	return 0;
 }
 
+struct orbit_pool *orbit_pool_from_scratch(struct orbit_scratch *s)
+{
+	struct orbit_pool *pool;
+	void *area;
+	int ret;
+	struct orbit_repr *record;
+	size_t rec_size = sizeof(struct orbit_repr);
+
+	if (!(s->cursor + rec_size < s->size_limit))
+		return NULL;
+
+	pool = (struct orbit_pool*)malloc(sizeof(struct orbit_pool));
+	if (pool == NULL) return NULL;
+
+	ret = pthread_spin_init(&pool->lock, PTHREAD_PROCESS_PRIVATE);
+	if (ret != 0) goto lock_init_fail;
+
+	record = (struct orbit_repr*)(s->ptr + s->cursor);
+	record->type = ORBIT_ANY;
+	record->any.length = 0;  /* Unknown size, filled by `conclude' */
+
+	pool->rawptr = record->any.data;
+	pool->length = s->size_limit - (record->any.data - (char*)s->ptr);
+	pool->cow = true;  /* Unused */
+
+	pool->allocated = 0;
+
+	return pool;
+
+lock_init_fail:
+	free(pool);
+	return NULL;
+}
+
+int orbit_pool_conclude_scratch(struct orbit_scratch *s, struct orbit_pool *pool)
+{
+	/* struct orbit_repr *record = (struct orbit_repr *)
+		((char*)pool->rawptr - offsetof(struct orbit_repr, any.data)); */
+	struct orbit_repr *record = (struct orbit_repr*)(s->ptr + s->cursor);
+	/* TODO: check other fields in `pool' */
+	record->any.length = pool->allocated;
+
+	s->cursor += sizeof(struct orbit_repr) + pool->allocated;
+	s->cursor = round_up_4(s->cursor);
+
+	return ++s->count;
+}
+
 int orbit_scratch_push_update(struct orbit_scratch *s, void *ptr, size_t length)
 {
 	struct orbit_repr *record;
