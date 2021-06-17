@@ -40,13 +40,17 @@ extern "C" {
  * And the orbit entry function can be used as a wrapper function that extracts
  * actual arguments from func_args and call the original function:
  *
- *     unsigned long func_orbit(void *argbuf) {
+ *     unsigned long func_orbit(..., void *argbuf) {
  *         struct func_args *args = (struct func_args *)argbuf;
  *         return func(args->arg1, args->arg2, args->arg3);
  *     }
  *
  * Such kind of wrapper functions can also be generated using orbit compiler,
  * or use some fancy tricks in languages with advanced type systems.
+ *
+ * The 'store' parameter is used for orbit's self-managed data.  It is
+ * initialized by the init_func specified in orbit_call.  The init_func will
+ * be called once after orbit has been successfully created.
  *
  * Return value is defined as an unsigned integer.  You can still use it to
  * represent negative values when calling in asynchronous mode.
@@ -55,7 +59,7 @@ extern "C" {
  * you can not use the MSB.  This can be fixed if we do not reuse the syscall
  * return value as orbit_entry return value.
  */
-typedef unsigned long(*orbit_entry)(void *argbuf);
+typedef unsigned long(*orbit_entry)(void *store, void *argbuf);
 
 struct orbit_module {
 	unsigned long obid;    // module id used by syscalls
@@ -135,7 +139,8 @@ struct orbit_repr {
  * Underlying syscall: orbit_create, 0 args, return obid.
  * entry_func is stored in the orbit task handle loop.
  */
-struct orbit_module *orbit_create(const char *module_name /* UNUSED */, orbit_entry entry_func);
+struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
+		orbit_entry entry_func, void*(*init_func)(void));
 // void obDestroy(orbit_module*);
 
 /*

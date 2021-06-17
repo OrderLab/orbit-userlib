@@ -64,13 +64,14 @@ static void info_init(void)
 unsigned long orbit_taskid;
 
 struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
-		orbit_entry entry_func)
+		orbit_entry entry_func, void*(*init_func)(void))
 {
 	struct orbit_module *ob;
 	long syscall_ret;
 	unsigned long ret = 0;
 	char argbuf[ARG_SIZE_MAX];
 	orbit_entry func_once = NULL;
+	void *store = NULL;
 
 	(void)module_name;
 
@@ -87,14 +88,16 @@ struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
 		/* FIXME: we should create scratch in orbit! */
 		// info_init();
 		(void)info_init;
+		if (init_func)
+			store = init_func();
 
 		/* TODO: allow the child to stop */
 		while (1) {
 			/* TODO: currently a hack to return for the first time
 			 * for initialization. */
 			orbit_taskid = syscall(SYS_ORBIT_RETURN, ret);
-			ret = func_once ? func_once(argbuf)
-					: entry_func(argbuf);
+			ret = func_once ? func_once(store, argbuf)
+					: entry_func(store, argbuf);
 		}
 	}
 
