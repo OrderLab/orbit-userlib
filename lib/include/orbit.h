@@ -91,7 +91,7 @@ struct orbit_pool {
 // typedef int(*orbit_callback)(struct orbit_update*);
 
 struct orbit_task {
-	unsigned long obid;
+	struct orbit_module *orbit;
 	unsigned long taskid;
 	// orbit_callback callback;
 };

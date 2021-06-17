@@ -159,8 +159,10 @@ int orbit_call_async(struct orbit_module *module, unsigned long flags,
 			npool, pools, arg, argsize);
 	if (ret < 0)
 		return ret;
-	if (task)
+	if (task) {
+		task->orbit = module;
 		task->taskid = ret;
+	}
 	return 0;
 }
 
@@ -169,7 +171,7 @@ unsigned long orbit_send(const struct orbit_update *update) {
 }
 
 unsigned long orbit_recv(struct orbit_task *task, struct orbit_update *update) {
-	return syscall(SYS_ORBIT_RECV, task->obid, task->taskid, update);
+	return syscall(SYS_ORBIT_RECV, task->orbit->gobid, task->taskid, update);
 }
 
 unsigned long orbit_commit(void) {
@@ -395,7 +397,8 @@ int orbit_sendv(struct orbit_scratch *s)
 
 int orbit_recvv(union orbit_result *result, struct orbit_task *task)
 {
-	int ret = syscall(SYS_ORBIT_RECVV, result, task->taskid);
+	int ret = syscall(SYS_ORBIT_RECVV, result, task->orbit->gobid,
+			  task->taskid);
 	if (ret == 1)
 		result->scratch.cursor = 0;
 	return ret;
