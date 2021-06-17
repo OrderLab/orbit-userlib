@@ -181,7 +181,8 @@ void *__orbit_pool_alloc(struct orbit_pool *pool, size_t size,
 			const char *file, int line);
 #define orbit_pool_alloc(pool, size) \
 	__orbit_pool_alloc(pool, size, __FILE__, __LINE__)
-void orbit_pool_free(struct orbit_pool *pool, void *ptr, size_t size);
+void orbit_pool_free(struct orbit_pool *pool, void *ptr);
+void *orbit_pool_realloc(struct orbit_pool *pool, void *oldptr, size_t newsize);
 
 /* Encoded orbit updates and operations. */
 struct orbit_scratch {

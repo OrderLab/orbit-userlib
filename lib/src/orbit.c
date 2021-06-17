@@ -230,6 +230,8 @@ pool_malloc_fail:
 void *__orbit_pool_alloc(struct orbit_pool *pool, size_t size,
 	const char *file, int line)
 {
+	size += sizeof(size_t);
+
 	void *ptr;
 	int ret;
 
@@ -257,15 +259,36 @@ void *__orbit_pool_alloc(struct orbit_pool *pool, size_t size,
 	(void)line;
 #endif
 
-	return ptr;
+	*(size_t*)ptr = size;
+
+	return (size_t*)ptr + 1;
 }
 
-void orbit_pool_free(struct orbit_pool *pool, void *ptr, size_t size)
+void orbit_pool_free(struct orbit_pool *pool, void *ptr)
 {
 	/* Let it leak. */
 	(void)pool;
 	(void)ptr;
-	(void)size;
+}
+
+void *orbit_pool_realloc(struct orbit_pool *pool, void *oldptr, size_t newsize)
+{
+	void *mem;
+	size_t *oldsize;
+
+	if (!oldptr)
+		return orbit_pool_alloc(pool, newsize);
+
+	oldsize = (size_t*)oldptr - 1;
+	if (*oldsize >= newsize) {
+		*oldsize = newsize;
+		return oldptr;
+	}
+
+	mem = orbit_pool_alloc(pool, newsize);
+	memcpy(mem, oldptr, *oldsize);
+	orbit_pool_free(pool, oldptr);
+	return mem;
 }
 
 /* === sendv/recvv === */
