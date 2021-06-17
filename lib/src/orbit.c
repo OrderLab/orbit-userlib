@@ -70,13 +70,14 @@ struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
 	long syscall_ret;
 	unsigned long ret = 0;
 	char argbuf[ARG_SIZE_MAX];
+	orbit_entry func_once = NULL;
 
 	(void)module_name;
 
 	ob = (struct orbit_module*)malloc(sizeof(struct orbit_module));
 	if (ob == NULL) return NULL;
 
-	syscall_ret = syscall(SYS_ORBIT_CREATE, argbuf);
+	syscall_ret = syscall(SYS_ORBIT_CREATE, argbuf, &func_once);
 	if (syscall_ret == -1) {
 		free(ob);
 		printf("syscall failed with errno: %s\n", strerror(errno));
@@ -92,7 +93,8 @@ struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
 			/* TODO: currently a hack to return for the first time
 			 * for initialization. */
 			orbit_taskid = syscall(SYS_ORBIT_RETURN, ret);
-			ret = entry_func(argbuf);
+			ret = func_once ? func_once(argbuf)
+					: entry_func(argbuf);
 		}
 	}
 
@@ -109,14 +111,27 @@ struct pool_range_kernel {
 	bool cow;
 };
 
+struct orbit_call_args_kernel {
+	unsigned long flags;
+	unsigned long obid;
+	size_t npool;
+	struct pool_range_kernel *pools;
+	orbit_entry func;
+	void *arg;
+	size_t argsize;
+};
+
 static long orbit_call_inner(struct orbit_module *module, unsigned long flags,
 		size_t npool, struct orbit_pool** pools,
-		void *arg, size_t argsize)
+		orbit_entry func, void *arg, size_t argsize)
 {
 	long ret;
 
 	/* This requries C99.  We can limit number of pools otherwise.*/
 	struct pool_range_kernel pools_kernel[npool];
+
+	struct orbit_call_args_kernel args = { flags, module->obid,
+			npool, pools_kernel, func, arg, argsize, };
 
 	for (size_t i = 0; i < npool; ++i) {
 		struct orbit_pool *pool = pools[i];
@@ -130,25 +145,24 @@ static long orbit_call_inner(struct orbit_module *module, unsigned long flags,
 		pools_kernel[i].cow = pool->cow;
 	}
 
-	ret = syscall(SYS_ORBIT_CALL, flags, module->obid,
-			npool, pools_kernel, arg, argsize);
+	ret = syscall(SYS_ORBIT_CALL, &args);
 	// printf("In orbit_call_inner, ret=%ld\n", ret);
 	return ret;
 }
 
 long orbit_call(struct orbit_module *module,
 		size_t npool, struct orbit_pool** pools,
-		void *arg, size_t argsize)
+		orbit_entry func, void *arg, size_t argsize)
 {
-	return orbit_call_inner(module, 0, npool, pools, arg, argsize);
+	return orbit_call_inner(module, 0, npool, pools, func, arg, argsize);
 }
 
 int orbit_call_async(struct orbit_module *module, unsigned long flags,
 		size_t npool, struct orbit_pool** pools,
-		void *arg, size_t argsize, struct orbit_task *task)
+		orbit_entry func, void *arg, size_t argsize, struct orbit_task *task)
 {
 	long ret = orbit_call_inner(module, flags | ORBIT_ASYNC,
-			npool, pools, arg, argsize);
+			npool, pools, func, arg, argsize);
 	if (ret < 0)
 		return ret;
 	if (task)

@@ -149,7 +149,7 @@ struct orbit_module *orbit_create(const char *module_name /* UNUSED */, orbit_en
  */
 long orbit_call(struct orbit_module *module,
 		size_t npool, struct orbit_pool** pools,
-		void *arg, size_t argsize);
+		orbit_entry func, void *arg, size_t argsize);
 
 /*
  * Create an async orbit call.
@@ -159,7 +159,7 @@ long orbit_call(struct orbit_module *module,
  */
 int orbit_call_async(struct orbit_module *module, unsigned long flags,
 		size_t npool, struct orbit_pool** pools,
-		void *arg, size_t argsize, struct orbit_task *task);
+		orbit_entry func, void *arg, size_t argsize, struct orbit_task *task);
 
 // Functions to send updates in the checker and receive in the main program.
 unsigned long orbit_send(const struct orbit_update *update);
