@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "acutest.h"
+
 typedef struct {
 	int arg1;
 	int arg2;
@@ -22,10 +24,10 @@ void test_addition()
 	struct orbit_module *addition_ob;
 	pid_t main_pid = getpid();
 	addition_ob = orbit_create("test_addition", test_addition_task_entry);
-	assert(addition_ob != NULL);
-	assert(addition_ob->mpid == main_pid);
-	assert(addition_ob->lobid > 0);
-	assert(addition_ob->gobid > 0);
+	TEST_ASSERT(addition_ob != NULL);
+	TEST_ASSERT(addition_ob->mpid == main_pid);
+	TEST_ASSERT(addition_ob->lobid > 0);
+	TEST_ASSERT(addition_ob->gobid > 0);
 	for (int i = 0; i < 5; i++) {
 		int a = rand() % 1000;
 		int b = rand() % 1000;
@@ -34,12 +36,18 @@ void test_addition()
 		long ret = orbit_call(addition_ob, 0, NULL, &args,
 				      sizeof(addition_args));
 		printf("Received result from orbit task=%ld\n", ret);
-		assert(a + b == ret);
+		TEST_CHECK(a + b == ret);
 	}
 }
 
-int main()
+TEST_LIST = {
+    { "addition", test_addition },
+    { NULL, NULL }
+};
+
+int main(int argc, char **argv)
 {
+	acutest_verbose_level_ = 3;
 	srand(time(NULL));
-	test_addition();
+	acutest_execute_main(argc, argv);
 }
