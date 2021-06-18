@@ -27,4 +27,7 @@ format-all:
 	@echo "Running clang-format on " $(all_sources)
 	clang-format $(all_sources)
 
-.PHONY: all clean $(subdirs)
+tags: $(all_sources)
+	ctags -R .
+
+.PHONY: all clean $(subdirs) format format-all format-check

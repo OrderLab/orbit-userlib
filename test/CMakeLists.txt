@@ -1,12 +1,13 @@
-add_executable(deadlock-detector-test
+set(TEST_SOURCES
   deadlock-detector-test.cc
-)
-target_link_libraries(deadlock-detector-test
-  PRIVATE orbit
-)
-add_executable(ttaslock
   ttaslock.cpp
+  sync-modify-simple.c
+  multi-orbits-simple.c
+  pool-basic.c
 )
-target_link_libraries(ttaslock
-  PRIVATE orbit
-)
+
+foreach(TEST_SOURCE_FILE ${TEST_SOURCES})
+  get_filename_component(TEST_EXECUTABLE_NAME ${TEST_SOURCE_FILE} NAME_WE)
+  add_executable(${TEST_EXECUTABLE_NAME} ${TEST_SOURCE_FILE})
+  target_link_libraries(${TEST_EXECUTABLE_NAME} PRIVATE orbit)
+endforeach(TEST_SOURCE_FILE ${TEST_SOURCES})

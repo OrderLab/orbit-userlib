@@ -63,25 +63,25 @@ static void info_init(void)
 
 unsigned long orbit_taskid;
 
-struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
+struct orbit_module *orbit_create(const char *module_name,
 		orbit_entry entry_func)
 {
 	struct orbit_module *ob;
-	long syscall_ret;
 	unsigned long ret = 0;
 	char argbuf[ARG_SIZE_MAX];
-
-	(void)module_name;
 
 	ob = (struct orbit_module*)malloc(sizeof(struct orbit_module));
 	if (ob == NULL) return NULL;
 
-	syscall_ret = syscall(SYS_ORBIT_CREATE, argbuf);
-	if (syscall_ret == -1) {
+	pid_t mpid;
+	obid_t lobid, gobid;
+
+	gobid = syscall(SYS_ORBIT_CREATE, module_name, argbuf, &mpid, &lobid);
+	if (gobid == -1) {
 		free(ob);
-		printf("syscall failed with errno: %s\n", strerror(errno));
+		printf("orbit_create failed with errno: %s\n", strerror(errno));
 		return NULL;
-	} else if (syscall_ret == 0) {
+	} else if (gobid == 0) {
 		/* We are now in child, we should run the function  */
 		/* FIXME: we should create scratch in orbit! */
 		// info_init();
@@ -96,10 +96,18 @@ struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
 		}
 	}
 
-	/* Now we are in parent. */
-	ob->obid = syscall_ret;
-	ob->entry_func = entry_func;
+	printf("Created orbit <mpid %d, lobid %d, gobid %d>\n", mpid, lobid,
+	       gobid);
 
+	/* Now we are in parent. */
+	ob->mpid = mpid;
+	ob->lobid = lobid;
+	ob->gobid = gobid;
+	ob->entry_func = entry_func;
+	if (module_name)
+		strncpy(ob->name, module_name, ORBIT_NAME_LEN);
+	else
+		strcpy(ob->name, "anonymous");
 	return ob;
 }
 
@@ -130,8 +138,8 @@ static long orbit_call_inner(struct orbit_module *module, unsigned long flags,
 		pools_kernel[i].cow = pool->cow;
 	}
 
-	ret = syscall(SYS_ORBIT_CALL, flags, module->obid,
-			npool, pools_kernel, arg, argsize);
+	ret = syscall(SYS_ORBIT_CALL, flags, module->gobid, npool, pools_kernel,
+		      arg, argsize);
 	// printf("In orbit_call_inner, ret=%ld\n", ret);
 	return ret;
 }
@@ -151,8 +159,10 @@ int orbit_call_async(struct orbit_module *module, unsigned long flags,
 			npool, pools, arg, argsize);
 	if (ret < 0)
 		return ret;
-	if (task)
+	if (task) {
+		task->orbit = module;
 		task->taskid = ret;
+	}
 	return 0;
 }
 
@@ -161,7 +171,7 @@ unsigned long orbit_send(const struct orbit_update *update) {
 }
 
 unsigned long orbit_recv(struct orbit_task *task, struct orbit_update *update) {
-	return syscall(SYS_ORBIT_RECV, task->obid, task->taskid, update);
+	return syscall(SYS_ORBIT_RECV, task->orbit->gobid, task->taskid, update);
 }
 
 unsigned long orbit_commit(void) {
@@ -387,7 +397,8 @@ int orbit_sendv(struct orbit_scratch *s)
 
 int orbit_recvv(union orbit_result *result, struct orbit_task *task)
 {
-	int ret = syscall(SYS_ORBIT_RECVV, result, task->taskid);
+	int ret = syscall(SYS_ORBIT_RECVV, result, task->orbit->gobid,
+			  task->taskid);
 	if (ret == 1)
 		result->scratch.cursor = 0;
 	return ret;
