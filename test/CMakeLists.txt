@@ -3,6 +3,7 @@ set(TEST_SOURCES
   ttaslock.cpp
   sync-modify-simple.c
   multi-orbits-simple.c
+  pool-basic.c
 )
 
 foreach(TEST_SOURCE_FILE ${TEST_SOURCES})
