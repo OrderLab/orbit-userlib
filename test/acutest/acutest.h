@@ -389,6 +389,7 @@ static char acutest_case_name_[TEST_CASE_MAXSIZE] = "";
 static int acutest_test_already_logged_ = 0;
 static int acutest_case_already_logged_ = 0;
 static int acutest_verbose_level_ = 2;
+static int acutest_test_successes_ = 0;
 static int acutest_test_failures_ = 0;
 static int acutest_colorize_ = 0;
 static int acutest_timer_ = 0;
@@ -589,13 +590,13 @@ acutest_begin_test_line_(const struct acutest_test_* test)
             acutest_colored_printf_(ACUTEST_COLOR_DEFAULT_INTENSIVE_, "Test %s:\n", test->name);
             acutest_test_already_logged_++;
         } else if(acutest_verbose_level_ >= 1) {
-            int n;
-            char spaces[48];
+            // int n;
+            // char spaces[48];
 
-            n = acutest_colored_printf_(ACUTEST_COLOR_DEFAULT_INTENSIVE_, "Test %s... ", test->name);
-            memset(spaces, ' ', sizeof(spaces));
-            if(n < (int) sizeof(spaces))
-                printf("%.*s", (int) sizeof(spaces) - n, spaces);
+            acutest_colored_printf_(ACUTEST_COLOR_DEFAULT_INTENSIVE_, "Test %s...\n", test->name);
+            // memset(spaces, ' ', sizeof(spaces));
+            // if(n < (int) sizeof(spaces))
+            //     printf("%.*s", (int) sizeof(spaces) - n, spaces);
         } else {
             acutest_test_already_logged_ = 1;
         }
@@ -657,14 +658,15 @@ acutest_check_(int cond, const char* file, int line, const char* fmt, ...)
     int verbose_level;
 
     if(cond) {
-        result_str = "ok";
+        result_str = "OK";
         result_color = ACUTEST_COLOR_GREEN_;
         verbose_level = 3;
+        acutest_test_successes_++;
     } else {
         if(!acutest_test_already_logged_  &&  acutest_current_test_ != NULL)
             acutest_finish_test_line_(-1);
 
-        result_str = "failed";
+        result_str = "FAIL";
         result_color = ACUTEST_COLOR_RED_;
         verbose_level = 2;
         acutest_test_failures_++;
@@ -1031,7 +1033,7 @@ aborted:
             acutest_line_indent_(1);
             if(acutest_test_failures_ == 0) {
                 acutest_colored_printf_(ACUTEST_COLOR_GREEN_INTENSIVE_, "SUCCESS: ");
-                printf("All conditions have passed.\n");
+                printf("All %d checks have passed.\n", acutest_test_successes_);
 
                 if(acutest_timer_) {
                     acutest_line_indent_(1);
@@ -1042,7 +1044,7 @@ aborted:
             } else {
                 acutest_colored_printf_(ACUTEST_COLOR_RED_INTENSIVE_, "FAILED: ");
                 if(!acutest_was_aborted_) {
-                    printf("%d condition%s %s failed.\n",
+                    printf("%d check%s %s failed.\n",
                             acutest_test_failures_,
                             (acutest_test_failures_ == 1) ? "" : "s",
                             (acutest_test_failures_ == 1) ? "has" : "have");
@@ -1630,7 +1632,7 @@ acutest_is_tracer_present_(void)
 #endif
 
 int
-main(int argc, char** argv)
+acutest_execute_main(int argc, char** argv)
 {
     int i;
 
@@ -1737,7 +1739,7 @@ main(int argc, char** argv)
 
         if(acutest_stat_failed_units_ == 0) {
             acutest_colored_printf_(ACUTEST_COLOR_GREEN_INTENSIVE_, "SUCCESS:");
-            printf(" All unit tests have passed.\n");
+            printf(" All %d unit tests have passed.\n", acutest_stat_run_units_);
         } else {
             acutest_colored_printf_(ACUTEST_COLOR_RED_INTENSIVE_, "FAILED:");
             printf(" %d of %d unit tests %s failed.\n",
