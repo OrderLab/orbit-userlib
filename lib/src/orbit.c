@@ -410,10 +410,6 @@ int orbit_recvv(union orbit_result *result, struct orbit_task *task)
 int orbit_destroy(obid_t gobid)
 {
 	return syscall(SYS_ORBIT_DESTROY, gobid);
-	// syscall(SYS_ORBIT_DESTROY, gobid);
-	// int ret = kill(gobid, SIGKILL);
-	// printf("killing %d returned %d\n", gobid, ret);
-	// return 0;
 }
 
 int orbit_destroy_all()

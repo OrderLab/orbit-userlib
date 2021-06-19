@@ -46,29 +46,41 @@ struct orbit_module * create_orbit_checked()
 	return ob;
 }
 
-bool destroy_orbit_checked(struct orbit_module *ob)
+bool _orbit_exists(struct orbit_module *ob)
 {
 	int ret;
 
 	// check if the gobid exits by sending kill 0
 	// TODO: should probably have a dedicated orbit existence check syscall
 	ret = kill(ob->gobid, 0);
-	TEST_CHECK(ret == 0);
+	return ret == 0;
+}
+
+bool _orbit_gone(struct orbit_module *ob)
+{
+	int ret;
+
+	ret = kill(ob->gobid, 0);
+	/* ESRCH indicates the gobid does not exist
+	 * TODO: there is a rare chance the PID is reused, so the test will
+	 * be flaky. Having a dedicated orbit existence syscall check will
+	 * help address the issue.
+	 */
+	return ret < 0 && errno == ESRCH;
+}
+
+bool destroy_orbit_checked(struct orbit_module *ob)
+{
+	int ret;
+
+	TEST_CHECK(_orbit_exists(ob));
 	printf("Orbit exists with GOBID %d, ready to destroy\n", ob->gobid);
 
 	ret = orbit_destroy(ob->gobid);
 	TEST_CHECK(ret == 0);
 
 	// check if the gobid exists again
-	ret = kill(ob->gobid, 0);
-	TEST_CHECK(ret < 0);
-
-	/* ESRCH indicates the gobid does not exist
-	 * TODO: there is a rare chance the PID is reused, so the test will
-	 * be flaky. Having a dedicated orbit existence syscall check will
-	 * help address the issue.
-	 */
-	TEST_CHECK(errno == ESRCH);
+	TEST_CHECK(_orbit_gone(ob));
 	printf("Orbit %d is successfully destroyed!\n", ob->gobid);
 	return true;
 }
@@ -81,6 +93,7 @@ void test_destroy_single()
 	TEST_ASSERT(ob != NULL);
 
 	destroy_orbit_checked(ob);
+	free(ob);
 }
 
 void test_destroy_multi()
@@ -115,11 +128,48 @@ void test_destroy_multi()
 		free(ob);
 		orbits[i] = NULL;
 	}
+
+	free(orbits);
+}
+
+void test_destroy_all()
+{
+	int N = 5;
+	struct orbit_module *ob;
+	struct orbit_module **orbits;
+
+	orbits = (struct orbit_module **)malloc(
+		N * sizeof(struct orbit_module *));
+
+	printf("Creating %d orbits\n", N);
+
+	// Create N orbits one by one
+	for (int i = 0; i < N; ++i) {
+		ob = create_orbit_checked();
+		TEST_ASSERT(ob != NULL);
+		orbits[i] = ob;
+		printf("- orbit %d created\n", ob->lobid);
+	}
+
+	// Do some work
+	sleep(2);
+
+	// Destroy them all at once
+	orbit_destroy_all();
+
+	for (int i = 0; i < N; ++i) {
+		ob = orbits[i];
+		TEST_CHECK(_orbit_gone(ob));
+		printf("- orbit %d destroyed\n", ob->lobid);
+		free(ob);
+	}
+	free(orbits);
 }
 
 TEST_LIST = {
     { "destroy_single", test_destroy_single },
     { "destroy_multiple", test_destroy_multi },
+    { "destroy_all", test_destroy_all },
     { NULL, NULL }
 };
 
