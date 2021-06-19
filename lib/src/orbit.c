@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <sys/mman.h>
+#include <signal.h>
 
 #define SYS_ORBIT_CREATE	436
 #define SYS_ORBIT_CALL		437
@@ -19,6 +20,8 @@
 #define SYS_ORBIT_COMMIT	441
 #define SYS_ORBIT_SENDV		442
 #define SYS_ORBIT_RECVV		443
+#define SYS_ORBIT_DESTROY	444
+#define SYS_ORBIT_DESTROY_ALL	445
 
 /* Orbit flags */
 #define ORBIT_ASYNC	1
@@ -402,6 +405,16 @@ int orbit_recvv(union orbit_result *result, struct orbit_task *task)
 	if (ret == 1)
 		result->scratch.cursor = 0;
 	return ret;
+}
+
+int orbit_destroy(obid_t gobid)
+{
+	return syscall(SYS_ORBIT_DESTROY, gobid);
+}
+
+int orbit_destroy_all()
+{
+	return syscall(SYS_ORBIT_DESTROY_ALL);
 }
 
 enum orbit_type orbit_apply_one(struct orbit_scratch *s, bool yield)

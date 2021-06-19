@@ -1,5 +1,5 @@
 core := lib
-remaining := example benchmark test
+remaining := examples benchmark tests
 subdirs := $(core) $(remaining)
 source_types := .h .c .cc .cpp 
 all_sources := $(foreach dir,$(subdirs),$(foreach stype,$(source_types),$(wildcard $(dir)/*$(stype)) $(wildcard $(dir)/**/*$(stype))))

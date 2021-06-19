@@ -230,10 +230,23 @@ int orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length);
  * If the caller decides not to send it, the caller needs to call create()
  * again to request a new scratch space. */
 int orbit_sendv(struct orbit_scratch *s);
+
 /* Returns 1 if update available, and modifies result->scratch;
  * Returns 0 on end of updates, and modifies result->retval;
  * Returns -1 on error, and sets errno. */
 int orbit_recvv(union orbit_result *result, struct orbit_task *task);
+
+/*
+ * Terminate the orbit identified by gobid for the current process.
+ *
+ * Return 0 on success.
+ */
+int orbit_destroy(obid_t gobid);
+
+/*
+ * Terminate all the orbits for the current process.
+ */
+int orbit_destroy_all();
 
 enum orbit_type orbit_apply(struct orbit_scratch *s, bool yield);
 enum orbit_type orbit_apply_one(struct orbit_scratch *s, bool yield);

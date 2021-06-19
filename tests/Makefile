@@ -1,4 +1,4 @@
-OBJDIR := ../build/test
+OBJDIR := ../build/tests
 BINDIR := $(OBJDIR)
 SRCDIR := .
 LDFLAGS := -L../build/lib -l:liborbit.a -pthread
