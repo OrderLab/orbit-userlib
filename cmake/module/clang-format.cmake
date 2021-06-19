@@ -12,8 +12,6 @@ foreach (SOURCE_FILE ${SOURCE_FILES_TO_FORMAT})
   endforeach()
 endforeach()
 
-message(STATUS "Checking format on source files ${SOURCE_FILES_TO_FORMAT}")
-
 if(CLANG_FORMAT_EXE)
   add_custom_target(
     format-all

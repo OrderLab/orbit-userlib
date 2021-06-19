@@ -1,7 +1,7 @@
 #include "orbit.h"
-#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "acutest.h"
 
 typedef struct {
 	int arg1;
@@ -40,11 +40,11 @@ void test_pool_add() {
 	long ret;
 
 	pool = orbit_pool_create(4096);
-	assert(pool != NULL);
+	TEST_ASSERT(pool != NULL);
 
 	add_ob = orbit_create("test_pool_add", pool_add_task_entry);
-	assert(add_ob != NULL);
-	assert(add_ob->gobid > 0);
+	TEST_ASSERT(add_ob != NULL);
+	TEST_ASSERT(add_ob->gobid > 0);
 	for (int i = 1; i <= 5; i++) {
 		int a = i * 101;
 		int b = i * i * 11;
@@ -54,7 +54,7 @@ void test_pool_add() {
 		ret = orbit_call(add_ob, 1, &pool, args, sizeof(add_args));
 		printf("Calling orbit task to add (%d, %d)\n", a, b);
 		printf("Received result from orbit task=%ld\n", ret);
-		assert(a + b == ret);
+		TEST_CHECK(a + b == ret);
 	}
 }
 
@@ -65,11 +65,11 @@ void test_pool_pointer() {
 	long ret, sum;
 
 	pool = orbit_pool_create(4096);
-	assert(pool != NULL);
+	TEST_ASSERT(pool != NULL);
 
 	ptr_ob = orbit_create("test_pool_pointer", pool_pointer_task_entry);
-	assert(ptr_ob != NULL);
-	assert(ptr_ob->gobid > 0);
+	TEST_ASSERT(ptr_ob != NULL);
+	TEST_ASSERT(ptr_ob->gobid > 0);
 
 	for (int i = 1; i <= 3; i++) {
 		args = (pointer_args *)orbit_pool_alloc(pool,
@@ -90,13 +90,20 @@ void test_pool_pointer() {
 		}
 		printf("}\n");
 		printf("Received result from orbit task=%ld\n", ret);
-		assert(sum == ret);
+		TEST_CHECK(sum == ret);
 	}
 
 }
 
-int main() {
+TEST_LIST = {
+    { "pool_add", test_pool_add },
+    { "pool_pointer", test_pool_pointer },
+    { NULL, NULL }
+};
+
+int main(int argc, char **argv)
+{
+	acutest_verbose_level_ = 3;
 	srand(time(NULL));
-	test_pool_add();
-	test_pool_pointer();
+	return acutest_execute_main(argc, argv);
 }
