@@ -6,6 +6,7 @@ set(TEST_SOURCES
   sync-modify-simple.c
   multi-orbits-simple.c
   pool-basic.c
+  destroy-orbit.c
 )
 
 foreach(TEST_SOURCE_FILE ${TEST_SOURCES})
