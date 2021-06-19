@@ -29,7 +29,11 @@ struct orbit_module * create_orbit_checked()
 	ob = orbit_create("test_destroy", test_task_entry);
 	printf("New orbit's main PID is %d", ob->mpid);
 	TEST_ASSERT(ob != NULL);
-	TEST_ASSERT(ob->mpid == main_pid);
+	if (!TEST_CHECK(ob->mpid == main_pid)) {
+		// assuming main PID mismatch is non-fatal
+		TEST_MSG("Expected main PID: %d, got main PID: %d", main_pid,
+			 ob->mpid);
+	}
 	TEST_ASSERT(ob->lobid > 0);
 	TEST_ASSERT(ob->gobid > 0);
 
