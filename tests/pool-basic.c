@@ -98,7 +98,8 @@ void test_pool_pointer() {
 		TEST_CHECK(sum == ret);
 	}
 	TEST_CHECK(orbit_exists(ptr_ob));
-	TEST_CHECK(orbit_destroy(ptr_ob->gobid) == 0);
+	// try testing orbit_destroy_all without specifying the gobid
+	TEST_CHECK(orbit_destroy_all() == 0);
 	if (TEST_CHECK(orbit_gone(ptr_ob)))
 		printf("Destroyed ptr_ob orbit %d\n", ptr_ob->gobid);
 	free(ptr_ob);
