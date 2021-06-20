@@ -1,5 +1,7 @@
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}/acutest")
 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -O0")
+
 set(TEST_SOURCES
   deadlock-detector-test.cc
   ttaslock.cpp
@@ -14,3 +16,6 @@ foreach(TEST_SOURCE_FILE ${TEST_SOURCES})
   add_executable(${TEST_EXECUTABLE_NAME} ${TEST_SOURCE_FILE})
   target_link_libraries(${TEST_EXECUTABLE_NAME} PUBLIC orbit)
 endforeach(TEST_SOURCE_FILE ${TEST_SOURCES})
+
+# add_test(NAME destroy-orbit COMMAND destroy-orbit)
+add_test(NAME pool-basic COMMAND pool-basic)

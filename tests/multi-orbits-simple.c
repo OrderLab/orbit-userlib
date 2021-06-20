@@ -21,7 +21,7 @@ unsigned long test_mult_task_entry(void *args)
 
 obid_t last_lobid = 0;
 
-void test_mult_(int no)
+struct orbit_module * test_mult_(int no)
 {
 	struct orbit_module *mult_ob;
 	pid_t main_pid = getpid();
@@ -45,14 +45,33 @@ void test_mult_(int no)
 		       mult_ob->lobid, ret);
 		TEST_CHECK(a * b == ret);
 	}
+	return mult_ob;
 }
 
 void test_mult()
 {
 	int N = 10;
-	for (int i = 1; i <= N; i++)
-		test_mult_(i);
+	struct orbit_module **orbits;
+	struct orbit_module *ob;
+
+	orbits = (struct orbit_module **)malloc(N *
+						sizeof(struct orbit_module *));
+	for (int i = 1; i <= N; i++) {
+		ob = test_mult_(i);
+		TEST_ASSERT(ob != NULL);
+		orbits[i - 1] = ob;
+	}
 	printf("Successfully created and tested %d orbit tasks\n", N);
+	printf("Trying to destroy all orbits\n");
+
+	TEST_CHECK(orbit_destroy_all() == 0);
+	for (int i = 0; i < N; i++) {
+		ob = orbits[i];
+		if (TEST_CHECK(orbit_gone(ob)))
+			printf("Destroyed orbit %d\n", ob->lobid);
+		free(ob);
+	}
+	free(orbits);
 }
 
 TEST_LIST = {
