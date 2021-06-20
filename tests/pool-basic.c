@@ -58,6 +58,7 @@ void test_pool_add() {
 	}
 	TEST_CHECK(orbit_exists(add_ob));
 	TEST_CHECK(orbit_destroy(add_ob->gobid) == 0);
+	usleep(1000);
 	if (TEST_CHECK(orbit_gone(add_ob)))
 		printf("Destroyed add_ob orbit %d\n", add_ob->gobid);
 	free(add_ob);
@@ -98,6 +99,7 @@ void test_pool_pointer() {
 		TEST_CHECK(sum == ret);
 	}
 	TEST_CHECK(orbit_exists(ptr_ob));
+	usleep(1000);
 	// try testing orbit_destroy_all without specifying the gobid
 	TEST_CHECK(orbit_destroy_all() == 0);
 	if (TEST_CHECK(orbit_gone(ptr_ob)))

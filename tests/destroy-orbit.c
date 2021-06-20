@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <math.h>
 
 #include "acutest.h"
 
@@ -55,9 +56,12 @@ bool destroy_orbit_checked(struct orbit_module *ob)
 	ret = orbit_destroy(ob->gobid);
 	TEST_CHECK(ret == 0);
 
+	// destroy can be a bit laggy under high load and making the test flaky.
+	usleep(1000);
+
 	// check if the gobid exists again
-	TEST_CHECK(orbit_gone(ob));
-	printf("Orbit %d is successfully destroyed!\n", ob->gobid);
+	if (TEST_CHECK(orbit_gone(ob)))
+		printf("Orbit %d is successfully destroyed!\n", ob->gobid);
 	return true;
 }
 
@@ -70,6 +74,23 @@ void test_destroy_single()
 
 	destroy_orbit_checked(ob);
 	free(ob);
+}
+
+void do_work()
+{
+	int i, cnt, N;
+	double x, y;
+
+	N = 1000;
+	cnt = 0;
+
+	for (i = 0; i < N; i++) {
+		x = (double) rand() / RAND_MAX;
+		y = (double) rand() / RAND_MAX;
+		if (x * x + y * y <= 1)
+			cnt++;
+	}
+	printf("Work result is %g\n", (double) cnt / N * 4);
 }
 
 void test_destroy_multi()
@@ -92,7 +113,7 @@ void test_destroy_multi()
 	}
 
 	// Do some work
-	sleep(1);
+	do_work();
 
 	printf("Destroying %d orbits\n", N);
 	// Destroy the N orbits one by one.
@@ -129,7 +150,7 @@ void test_destroy_all()
 	}
 
 	// Do some work
-	sleep(1);
+	do_work();
 
 	// Destroy them all at once
 	orbit_destroy_all();
@@ -153,11 +174,12 @@ TEST_LIST = {
 int main(int argc, char **argv)
 {
 	main_pid = getpid();
+	srand(time(NULL));
 	printf("Main program PID %d launched\n", main_pid);
 
 	// setting no_exec is needed, otherwise acutest run
 	// the tests in child processes (fork)
 	acutest_no_exec_ = 1;
-	acutest_verbose_level_ = 3;
+	// acutest_verbose_level_ = 3;
 	acutest_execute_main(argc, argv);
 }

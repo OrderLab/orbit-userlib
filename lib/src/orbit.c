@@ -64,7 +64,7 @@ static void info_init(void)
 	scratch_init();
 }
 
-unsigned long orbit_taskid;
+long orbit_taskid;
 
 struct orbit_module *orbit_create(const char *module_name,
 		orbit_entry entry_func)
@@ -95,6 +95,10 @@ struct orbit_module *orbit_create(const char *module_name,
 			/* TODO: currently a hack to return for the first time
 			 * for initialization. */
 			orbit_taskid = syscall(SYS_ORBIT_RETURN, ret);
+			if (orbit_taskid < 0) {
+				fprintf(stderr, "orbit returns ERROR, exit\n");
+				break;
+			}
 			ret = entry_func(argbuf);
 		}
 	}
