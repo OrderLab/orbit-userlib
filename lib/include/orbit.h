@@ -61,10 +61,25 @@ extern "C" {
  */
 typedef unsigned long(*orbit_entry)(void *store, void *argbuf);
 
+typedef int pid_t;
+typedef int obid_t;
+
+#define ORBIT_NAME_LEN 16
+
+/*
+ * An orbit can be identified by either a <mpid, lobid> tuple or a <gobid>.
+ *
+ * <mpid> represents the main program the orbit is attached to.
+ * <lobid> is the orbit id local to the main program, and is not globally unique.
+ * <gobid> is the globally unique id assigned to an orbit.
+ */
 struct orbit_module {
-	unsigned long obid;    // module id used by syscalls
+	pid_t mpid; // PID of the main program
+	obid_t lobid; // orbit id local to a main program
+	pid_t gobid; // global orbit id, which can uniquely identify the kernel object
+
 	orbit_entry entry_func;
-	// TODO
+	char name[ORBIT_NAME_LEN];
 };
 
 /*
@@ -104,7 +119,7 @@ struct orbit_pool {
 // typedef int(*orbit_callback)(struct orbit_update*);
 
 struct orbit_task {
-	unsigned long obid;
+	struct orbit_module *orbit;
 	unsigned long taskid;
 	// orbit_callback callback;
 };
@@ -163,7 +178,7 @@ struct orbit_repr {
  * Underlying syscall: orbit_create, 0 args, return obid.
  * entry_func is stored in the orbit task handle loop.
  */
-struct orbit_module *orbit_create(const char *module_name /* UNUSED */,
+struct orbit_module *orbit_create(const char *module_name,
 		orbit_entry entry_func, void*(*init_func)(void));
 // void obDestroy(orbit_module*);
 
@@ -338,6 +353,7 @@ int orbit_scratch_close_any(struct orbit_scratch *s);
  * again to request a new scratch space.
  */
 int orbit_sendv(struct orbit_scratch *s);
+
 /*
  * Receive in the main program.  Expect a scratch or return value from
  * orbit_call.
@@ -347,6 +363,21 @@ int orbit_sendv(struct orbit_scratch *s);
  * Returns -1 on error, and sets errno.
  */
 int orbit_recvv(union orbit_result *result, struct orbit_task *task);
+
+/*
+ * Terminate the orbit identified by gobid for the current process.
+ *
+ * Return 0 on success.
+ */
+int orbit_destroy(obid_t gobid);
+
+/*
+ * Terminate all the orbits for the current process.
+ */
+int orbit_destroy_all();
+
+bool orbit_exists(struct orbit_module *ob);
+bool orbit_gone(struct orbit_module *ob);
 
 enum orbit_type orbit_apply(struct orbit_scratch *s, bool yield);
 enum orbit_type orbit_apply_one(struct orbit_scratch *s, bool yield);
