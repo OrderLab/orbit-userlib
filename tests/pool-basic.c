@@ -56,6 +56,11 @@ void test_pool_add() {
 		printf("Received result from orbit task=%ld\n", ret);
 		TEST_CHECK(a + b == ret);
 	}
+	TEST_CHECK(orbit_exists(add_ob));
+	TEST_CHECK(orbit_destroy(add_ob->gobid) == 0);
+	if (TEST_CHECK(orbit_gone(add_ob)))
+		printf("Destroyed add_ob orbit %d\n", add_ob->gobid);
+	free(add_ob);
 }
 
 void test_pool_pointer() {
@@ -92,7 +97,11 @@ void test_pool_pointer() {
 		printf("Received result from orbit task=%ld\n", ret);
 		TEST_CHECK(sum == ret);
 	}
-
+	TEST_CHECK(orbit_exists(ptr_ob));
+	TEST_CHECK(orbit_destroy(ptr_ob->gobid) == 0);
+	if (TEST_CHECK(orbit_gone(ptr_ob)))
+		printf("Destroyed ptr_ob orbit %d\n", ptr_ob->gobid);
+	free(ptr_ob);
 }
 
 TEST_LIST = {
@@ -103,6 +112,7 @@ TEST_LIST = {
 
 int main(int argc, char **argv)
 {
+	acutest_no_exec_ = 1;
 	acutest_verbose_level_ = 3;
 	srand(time(NULL));
 	return acutest_execute_main(argc, argv);

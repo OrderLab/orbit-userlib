@@ -37,6 +37,11 @@ void test_addition()
 		printf("Received result from orbit task=%ld\n", ret);
 		TEST_CHECK(a + b == ret);
 	}
+	TEST_CHECK(orbit_exists(addition_ob));
+	TEST_CHECK(orbit_destroy(addition_ob->gobid) == 0);
+	if (TEST_CHECK(orbit_gone(addition_ob)))
+		printf("Destroyed addition_ob orbit %d\n", addition_ob->gobid);
+	free(addition_ob);
 }
 
 TEST_LIST = {
@@ -46,6 +51,7 @@ TEST_LIST = {
 
 int main(int argc, char **argv)
 {
+	acutest_no_exec_ = 1;
 	acutest_verbose_level_ = 3;
 	srand(time(NULL));
 	acutest_execute_main(argc, argv);

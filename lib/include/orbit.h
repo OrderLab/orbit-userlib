@@ -248,6 +248,9 @@ int orbit_destroy(obid_t gobid);
  */
 int orbit_destroy_all();
 
+bool orbit_exists(struct orbit_module *ob);
+bool orbit_gone(struct orbit_module *ob);
+
 enum orbit_type orbit_apply(struct orbit_scratch *s, bool yield);
 enum orbit_type orbit_apply_one(struct orbit_scratch *s, bool yield);
 enum orbit_type orbit_skip(struct orbit_scratch *s, bool yield);

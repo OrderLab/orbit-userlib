@@ -27,7 +27,6 @@ struct orbit_module * create_orbit_checked()
 	struct orbit_task task;
 
 	ob = orbit_create("test_destroy", test_task_entry);
-	printf("New orbit's main PID is %d", ob->mpid);
 	TEST_ASSERT(ob != NULL);
 	if (!TEST_CHECK(ob->mpid == main_pid)) {
 		// assuming main PID mismatch is non-fatal
@@ -46,41 +45,18 @@ struct orbit_module * create_orbit_checked()
 	return ob;
 }
 
-bool _orbit_exists(struct orbit_module *ob)
-{
-	int ret;
-
-	// check if the gobid exits by sending kill 0
-	// TODO: should probably have a dedicated orbit existence check syscall
-	ret = kill(ob->gobid, 0);
-	return ret == 0;
-}
-
-bool _orbit_gone(struct orbit_module *ob)
-{
-	int ret;
-
-	ret = kill(ob->gobid, 0);
-	/* ESRCH indicates the gobid does not exist
-	 * TODO: there is a rare chance the PID is reused, so the test will
-	 * be flaky. Having a dedicated orbit existence syscall check will
-	 * help address the issue.
-	 */
-	return ret < 0 && errno == ESRCH;
-}
-
 bool destroy_orbit_checked(struct orbit_module *ob)
 {
 	int ret;
 
-	TEST_CHECK(_orbit_exists(ob));
+	TEST_CHECK(orbit_exists(ob));
 	printf("Orbit exists with GOBID %d, ready to destroy\n", ob->gobid);
 
 	ret = orbit_destroy(ob->gobid);
 	TEST_CHECK(ret == 0);
 
 	// check if the gobid exists again
-	TEST_CHECK(_orbit_gone(ob));
+	TEST_CHECK(orbit_gone(ob));
 	printf("Orbit %d is successfully destroyed!\n", ob->gobid);
 	return true;
 }
@@ -116,7 +92,7 @@ void test_destroy_multi()
 	}
 
 	// Do some work
-	sleep(2);
+	sleep(1);
 
 	printf("Destroying %d orbits\n", N);
 	// Destroy the N orbits one by one.
@@ -147,19 +123,20 @@ void test_destroy_all()
 	for (int i = 0; i < N; ++i) {
 		ob = create_orbit_checked();
 		TEST_ASSERT(ob != NULL);
-		orbits[i] = ob;
+		TEST_CHECK(orbit_exists(ob));
 		printf("- orbit %d created\n", ob->lobid);
+		orbits[i] = ob;
 	}
 
 	// Do some work
-	sleep(2);
+	sleep(1);
 
 	// Destroy them all at once
 	orbit_destroy_all();
 
 	for (int i = 0; i < N; ++i) {
 		ob = orbits[i];
-		TEST_CHECK(_orbit_gone(ob));
+		TEST_CHECK(orbit_gone(ob));
 		printf("- orbit %d destroyed\n", ob->lobid);
 		free(ob);
 	}
