@@ -7,6 +7,7 @@ set(UNIT_TEST_SOURCES
   multi-orbits-simple.c
   pool-basic.c
   destroy-orbit.c
+  async-update-basic.c
 )
 
 # they not been rewritten into unit tests
