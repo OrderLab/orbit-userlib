@@ -22,6 +22,17 @@
 #define SYS_ORBIT_RECVV		443
 #define SYS_ORBIT_DESTROY	444
 #define SYS_ORBIT_DESTROY_ALL	445
+#define SYS_ORBIT_STATE		446
+
+enum orbit_state
+{
+        ORBIT_NEW,
+        ORBIT_ATTACHED,
+        ORBIT_STARTED,
+        ORBIT_STOPPED,
+        ORBIT_DETTACHED,
+        ORBIT_DEAD
+};
 
 /* Orbit flags */
 #define ORBIT_ASYNC	1
@@ -424,22 +435,17 @@ int orbit_destroy_all()
 bool orbit_exists(struct orbit_module *ob)
 {
 	int ret;
-	// check if the gobid exits by sending kill 0
-	// TODO: should probably have a dedicated orbit existence check syscall
-	ret = kill(ob->gobid, 0);
-	return ret == 0;
+	enum orbit_state state;
+	ret = syscall(SYS_ORBIT_STATE, ob->gobid, &state);
+	return ret == 0 && state != ORBIT_DEAD;
 }
 
 bool orbit_gone(struct orbit_module *ob)
 {
 	int ret;
-	ret = kill(ob->gobid, 0);
-	/* ESRCH indicates the gobid does not exist
-	 * TODO: there is a rare chance the PID is reused, so the test will
-	 * be flaky. Having a dedicated orbit existence syscall check will
-	 * help address the issue.
-	 */
-	return ret < 0 && errno == ESRCH;
+	enum orbit_state state;
+	ret = syscall(SYS_ORBIT_STATE, ob->gobid, &state);
+	return ret < 0 || state == ORBIT_DEAD;
 }
 
 enum orbit_type orbit_apply_one(struct orbit_scratch *s, bool yield)
