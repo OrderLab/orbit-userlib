@@ -76,5 +76,5 @@ int main(int argc, char **argv)
 	acutest_no_exec_ = 1;
 	acutest_verbose_level_ = 3;
 	srand(time(NULL));
-	acutest_execute_main(argc, argv);
+	return acutest_execute_main(argc, argv);
 }

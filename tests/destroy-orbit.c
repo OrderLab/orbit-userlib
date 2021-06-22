@@ -181,5 +181,5 @@ int main(int argc, char **argv)
 	// the tests in child processes (fork)
 	acutest_no_exec_ = 1;
 	// acutest_verbose_level_ = 3;
-	acutest_execute_main(argc, argv);
+	return acutest_execute_main(argc, argv);
 }
