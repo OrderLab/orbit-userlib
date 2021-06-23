@@ -24,6 +24,7 @@ unsigned long task_entry1(void *args)
 	update->ptr = NULL;
 	update->length = sizeof(uint64_t);
 	*(uint64_t *)update->data = result;
+	printf("Sending update %lu\n", result);
 	TEST_ASSERT(orbit_send(update) == 0);
 	return 0;
 }
@@ -36,24 +37,28 @@ void do_work()
 
 void test_async_update()
 {
-	struct orbit_module *m = orbit_create("async_update", task_entry1);
-	struct orbit_pool *pool = orbit_pool_create(4096 * 16);
-	struct task1_args *args = (struct task1_args *)orbit_pool_alloc(
-		pool, sizeof(struct task1_args));
+	struct orbit_pool *pool;
+	struct orbit_module *m;
+	struct task1_args *args;
 	struct orbit_task task;
 	uint64_t received = 0, expected = 0;
-	struct orbit_update *update = (struct orbit_update*)
-		malloc(sizeof(struct orbit_update) + 32);
+	struct orbit_update *update;
+
+	pool = orbit_pool_create(4096 * 16);
+	m = orbit_create("async_update", task_entry1);
+	args = (struct task1_args *) orbit_pool_alloc(
+		pool, sizeof(struct task1_args));
+	update = (struct orbit_update*) malloc(sizeof(struct orbit_update) + 32);
 
 	args->size = 100;
 	for (int i = 0; i < args->size; i++) {
-		args->data[i] = rand() % 1000;
-		args->data[i] = i * i * args->data[i];
+		args->data[i] = rand() % 10000;
+		args->data[i] = i * (i + 1) * args->data[i];
 		expected += args->data[i];
 	}
 
 	int ret = orbit_call_async(m, 0, 1, &pool, args,
-				   sizeof(struct task1_args *), &task);
+				   sizeof(struct task1_args), &task);
 	TEST_ASSERT(ret == 0);
 	do_work();
 
@@ -62,7 +67,11 @@ void test_async_update()
 	TEST_CHECK(update->ptr == NULL);
 	TEST_CHECK(update->length == 8);
 	received = *((uint64_t *)update->data);
-	TEST_CHECK(received == expected);
+	if (!TEST_CHECK(received == expected))
+		TEST_MSG("Expected :%lu; Received: %lu\n", expected, received);
+
+	ret = orbit_destroy(m->gobid);
+	TEST_ASSERT(ret == 0);
 }
 
 
