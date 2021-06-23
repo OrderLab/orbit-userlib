@@ -112,6 +112,7 @@ struct orbit_module *orbit_create(const char *module_name,
 			}
 			ret = entry_func(argbuf);
 		}
+		exit(0);
 	}
 
 	printf("Created orbit <mpid %d, lobid %d, gobid %d>\n", mpid, lobid,
