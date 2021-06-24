@@ -4,6 +4,7 @@ find_package(Threads REQUIRED)
 include_directories(include)
 
 add_library(orbit STATIC SHARED
+  src/dlmalloc.c
   src/orbit.c
 )
 target_link_libraries(orbit
