@@ -9,8 +9,9 @@
 
 pid_t main_pid;
 
-unsigned long test_task_entry(void *args)
+unsigned long test_task_entry(void *store, void *args)
 {
+	(void) store;
 	(void) args;
 	long sum = 0;
 	for (int i = 0; i < 1000; i++) {
@@ -27,7 +28,7 @@ struct orbit_module * create_orbit_checked()
 	int ret, dummy;
 	struct orbit_task task;
 
-	ob = orbit_create("test_destroy", test_task_entry);
+	ob = orbit_create("test_destroy", test_task_entry, NULL);
 	TEST_ASSERT(ob != NULL);
 	if (!TEST_CHECK(ob->mpid == main_pid)) {
 		// assuming main PID mismatch is non-fatal
@@ -39,7 +40,7 @@ struct orbit_module * create_orbit_checked()
 
 	// Launching an async task that lasts for a while
 	dummy = 100;
-	ret = orbit_call_async(ob, 0, 0, NULL, &dummy, sizeof(int), &task);
+	ret = orbit_call_async(ob, 0, 0, NULL, NULL, &dummy, sizeof(int), &task);
 	TEST_CHECK(ret == 0);
 	printf("Async orbit call returns task id %ld\n", task.taskid);
 

@@ -13,16 +13,18 @@ typedef struct {
 	int *buffer;
 } pointer_args;
 
-unsigned long pool_add_task_entry(void *args)
+unsigned long pool_add_task_entry(void *store, void *args)
 {
+	(void)store;
 	add_args *p = (add_args *)args;
 	printf("Received addition args (%d, %d) from main program\n", p->arg1,
 	       p->arg2);
 	return p->arg1 + p->arg2;
 }
 
-unsigned long pool_pointer_task_entry(void *args)
+unsigned long pool_pointer_task_entry(void *store, void *args)
 {
+	(void)store;
 	// assuming a pointer to the pointer_args is passed
 	pointer_args *p = *(pointer_args **)args;
 	printf("Received pointer_args %p from main program\n", p);
@@ -35,23 +37,26 @@ unsigned long pool_pointer_task_entry(void *args)
 
 void test_pool_add() {
 	struct orbit_pool *pool;
+	struct orbit_allocator *alloc;
 	struct orbit_module *add_ob;
 	add_args *args;
 	long ret;
 
 	pool = orbit_pool_create(4096);
 	TEST_ASSERT(pool != NULL);
+	alloc = orbit_allocator_from_pool(pool, false);
+	TEST_ASSERT(alloc != NULL);
 
-	add_ob = orbit_create("test_pool_add", pool_add_task_entry);
+	add_ob = orbit_create("test_pool_add", pool_add_task_entry, NULL);
 	TEST_ASSERT(add_ob != NULL);
 	TEST_ASSERT(add_ob->gobid > 0);
 	for (int i = 1; i <= 5; i++) {
 		int a = i * 101;
 		int b = i * i * 11;
-		args = (add_args*)orbit_pool_alloc(pool, sizeof(add_args));
+		args = (add_args*)orbit_alloc(alloc, sizeof(add_args));
 		args->arg1 = a;
 		args->arg2 = b;
-		ret = orbit_call(add_ob, 1, &pool, args, sizeof(add_args));
+		ret = orbit_call(add_ob, 1, &pool, NULL, args, sizeof(add_args));
 		printf("Calling orbit task to add (%d, %d)\n", a, b);
 		printf("Received result from orbit task=%ld\n", ret);
 		TEST_CHECK(a + b == ret);
@@ -66,29 +71,31 @@ void test_pool_add() {
 
 void test_pool_pointer() {
 	struct orbit_pool *pool;
+	struct orbit_allocator *alloc;
 	struct orbit_module *ptr_ob;
 	pointer_args *args;
 	long ret, sum;
 
 	pool = orbit_pool_create(4096);
 	TEST_ASSERT(pool != NULL);
+	alloc = orbit_allocator_from_pool(pool, false);
+	TEST_ASSERT(alloc != NULL);
 
-	ptr_ob = orbit_create("test_pool_pointer", pool_pointer_task_entry);
+	ptr_ob = orbit_create("test_pool_pointer", pool_pointer_task_entry, NULL);
 	TEST_ASSERT(ptr_ob != NULL);
 	TEST_ASSERT(ptr_ob->gobid > 0);
 
 	for (int i = 1; i <= 3; i++) {
-		args = (pointer_args *)orbit_pool_alloc(pool,
-							sizeof(pointer_args));
+		args = (pointer_args *)orbit_alloc(alloc, sizeof(pointer_args));
 		args->size = i * 5;
 		args->buffer =
-			(int *)orbit_pool_alloc(pool, args->size * sizeof(int));
+			(int *)orbit_alloc(alloc, args->size * sizeof(int));
 		sum = 0;
 		for (int j = 0; j < args->size; j++) {
 			args->buffer[j] = rand() % 100;
 			sum += args->buffer[j];
 		}
-		ret = orbit_call(ptr_ob, 1, &pool, &args, sizeof(pointer_args *));
+		ret = orbit_call(ptr_ob, 1, &pool, NULL, &args, sizeof(pointer_args *));
 		printf("Calling orbit task to sum a buffer {");
 		for (int j = 0; j < args->size; j++) {
 			printf("%d", args->buffer[j]);

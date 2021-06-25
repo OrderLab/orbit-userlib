@@ -11,8 +11,9 @@ struct task1_args {
 	int data[128];
 };
 
-unsigned long task_entry1(void *args)
+unsigned long task_entry1(void *store, void *args)
 {
+	(void)store;
 	struct task1_args *real_args = (struct task1_args *) args;
 	printf("Orbit received %d items from main program\n", real_args->size);
 	uint64_t result = 0;
@@ -38,6 +39,7 @@ void do_work()
 void test_async_update()
 {
 	struct orbit_pool *pool;
+	struct orbit_allocator *alloc;
 	struct orbit_module *m;
 	struct task1_args *args;
 	struct orbit_task task;
@@ -45,9 +47,10 @@ void test_async_update()
 	struct orbit_update *update;
 
 	pool = orbit_pool_create(4096 * 16);
-	m = orbit_create("async_update", task_entry1);
-	args = (struct task1_args *) orbit_pool_alloc(
-		pool, sizeof(struct task1_args));
+	alloc = orbit_allocator_from_pool(pool, false);
+	m = orbit_create("async_update", task_entry1, NULL);
+	args = (struct task1_args *) orbit_alloc(
+		alloc, sizeof(struct task1_args));
 	update = (struct orbit_update*) malloc(sizeof(struct orbit_update) + 32);
 
 	args->size = 100;
@@ -57,7 +60,7 @@ void test_async_update()
 		expected += args->data[i];
 	}
 
-	int ret = orbit_call_async(m, 0, 1, &pool, args,
+	int ret = orbit_call_async(m, 0, 1, &pool, NULL, args,
 				   sizeof(struct task1_args), &task);
 	TEST_ASSERT(ret == 0);
 	do_work();

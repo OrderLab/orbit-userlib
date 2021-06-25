@@ -8,13 +8,15 @@
 #include <string.h>
 #include <unistd.h>
 
-unsigned long checker_plus_one_simple(void *argbuf) {
+unsigned long checker_plus_one_simple(void *store, void *argbuf) {
+	(void)store;
 	/* Extract copied int from arg buffer */
 	int obj = *(int*)argbuf;
 	return obj + 1;
 }
 
-unsigned long checker_plus_one_pool(void *argbuf) {
+unsigned long checker_plus_one_pool(void *store, void *argbuf) {
+	(void)store;
 	/* pointer to an int in the pool */
 	int *obj = *(int**)argbuf;
 
@@ -22,7 +24,8 @@ unsigned long checker_plus_one_pool(void *argbuf) {
 	return *obj;
 }
 
-unsigned long checker_plus_one_async(void *argbuf) {
+unsigned long checker_plus_one_async(void *store, void *argbuf) {
+	(void)store;
 	/* pointer to an int in the pool */
 	int *obj = *(int**)argbuf;
 
@@ -39,7 +42,8 @@ unsigned long checker_plus_one_async(void *argbuf) {
 	return 0;
 }
 
-unsigned long checker_plus_one_commit(void *argbuf) {
+unsigned long checker_plus_one_commit(void *store, void *argbuf) {
+	(void)store;
 	/* pointer to an int in the pool */
 	int *obj = *(int**)argbuf;
 
@@ -53,12 +57,12 @@ void test_plus_one_simple() {
 	struct orbit_module *m;
 	int obj, ret;
 
-	m = orbit_create("test_module", checker_plus_one_simple);
+	m = orbit_create("test_module", checker_plus_one_simple, NULL);
 	assert(m != NULL);
 
 	obj = 200;
 
-	ret = orbit_call(m, 0, NULL, &obj, sizeof(obj));
+	ret = orbit_call(m, 0, NULL, NULL, &obj, sizeof(obj));
 	printf("In parent: ret = %d\n", ret);
 
 	assert(ret == 201);
@@ -66,51 +70,57 @@ void test_plus_one_simple() {
 
 void test_plus_one_pool() {
 	struct orbit_pool *pool;
+	struct orbit_allocator *alloc;
 	struct orbit_module *m;
 	int *obj, ret;
 
 	pool = orbit_pool_create(4096);
 	assert(pool != NULL);
+	alloc = orbit_allocator_from_pool(pool, false);
+	assert(alloc != NULL);
 
-	obj = (int*)orbit_pool_alloc(pool, sizeof(int));
+	obj = (int*)orbit_alloc(alloc, sizeof(int));
 	/* Early implementation of orbit_create will still copy the whole
 	 * address space.  Set an initial value for debug use. */
 	*obj = 100;
 
-	m = orbit_create("test_module", checker_plus_one_pool);
+	m = orbit_create("test_module", checker_plus_one_pool, NULL);
 	assert(m != NULL);
 
 	*obj = 200;
 
-	ret = orbit_call(m, 1, &pool, &obj, sizeof(obj));
+	ret = orbit_call(m, 1, &pool, NULL, &obj, sizeof(obj));
 	printf("In parent: *obj is %d, ret = %d\n", *obj, ret);
 
 	assert(*obj == 200 && ret == 201);
-	orbit_pool_free(pool, obj, sizeof(*obj));
+	orbit_free(alloc, obj);
 }
 
 void test_multiple_plus_one() {
 	struct orbit_pool *pool;
+	struct orbit_allocator *alloc;
 	struct orbit_module *m;
 	int *obj, ret;
 
 	pool = orbit_pool_create(4096);
 	assert(pool != NULL);
+	alloc = orbit_allocator_from_pool(pool, false);
+	assert(alloc != NULL);
 
-	obj = (int*)orbit_pool_alloc(pool, sizeof(int));
+	obj = (int*)orbit_alloc(alloc, sizeof(int));
 	*obj = 100;
 
-	m = orbit_create("test_module", checker_plus_one_pool);
+	m = orbit_create("test_module", checker_plus_one_pool, NULL);
 	assert(m != NULL);
 
 	for (int i = 200; i <= 1000; i += 100) {
 		*obj = i;
-		ret = orbit_call(m, 1, &pool, &obj, sizeof(obj));
+		ret = orbit_call(m, 1, &pool, NULL, &obj, sizeof(obj));
 		printf("In parent: ret is %d, obj is %d\n", ret, *obj);
 		assert(ret == i + 1 && *obj == i);
 	}
 
-	orbit_pool_free(pool, obj, sizeof(*obj));
+	orbit_free(alloc, obj);
 }
 
 
@@ -135,22 +145,25 @@ void *recv_worker(void *_task) {
 
 void test_plus_one_async(bool recv_thread) {
 	struct orbit_pool *pool;
+	struct orbit_allocator *alloc;
 	struct orbit_module *m;
 	int *obj, ret;
 
 	pool = orbit_pool_create(4096);
 	assert(pool != NULL);
+	alloc = orbit_allocator_from_pool(pool, false);
+	assert(alloc != NULL);
 
-	obj = (int*)orbit_pool_alloc(pool, sizeof(int));
+	obj = (int*)orbit_alloc(alloc, sizeof(int));
 	*obj = 100;
 
-	m = orbit_create("test_module", checker_plus_one_async);
+	m = orbit_create("test_module", checker_plus_one_async, NULL);
 	assert(m != NULL);
 
 	*obj = 200;
 
 	struct orbit_task task;
-	ret = orbit_call_async(m, 0, 1, &pool, &obj, sizeof(obj), &task);
+	ret = orbit_call_async(m, 0, 1, &pool, NULL, &obj, sizeof(obj), &task);
 	assert(ret == 0);
 
 	printf("In parent, we returned immediately, id=%ld\n", task.taskid);
@@ -165,28 +178,31 @@ void test_plus_one_async(bool recv_thread) {
 
 	printf("In parent: *obj is %d\n", *obj);
 	assert(*obj == 201);
-	orbit_pool_free(pool, obj, sizeof(*obj));
+	orbit_free(alloc, obj);
 }
 
 void test_plus_one_async_commit() {
 	struct orbit_pool *pool;
+	struct orbit_allocator *alloc;
 	struct orbit_module *m;
 	int *obj, ret;
 
 	pool = orbit_pool_create(4096);
 	assert(pool != NULL);
+	alloc = orbit_allocator_from_pool(pool, false);
+	assert(alloc != NULL);
 
-	obj = (int*)orbit_pool_alloc(pool, sizeof(int));
+	obj = (int*)orbit_alloc(alloc, sizeof(int));
 	*obj = 100;
 
-	m = orbit_create("test_module", checker_plus_one_commit);
+	m = orbit_create("test_module", checker_plus_one_commit, NULL);
 	assert(m != NULL);
 
 	for (int i = 200; i <= 1000; i += 100) {
 		*obj = i;
 
 		struct orbit_task task;
-		ret = orbit_call_async(m, 0, 1, &pool, &obj, sizeof(obj), &task);
+		ret = orbit_call_async(m, 0, 1, &pool, NULL, &obj, sizeof(obj), &task);
 		assert(ret == 0);
 
 		printf("In parent, we returned immediately id=%ld\n", task.taskid);
@@ -197,11 +213,12 @@ void test_plus_one_async_commit() {
 		assert(*obj == i + 1);
 	}
 
-	orbit_pool_free(pool, obj, sizeof(*obj));
+	orbit_free(alloc, obj);
 }
 
 
-unsigned long checker_fail(void *ptr) {
+unsigned long checker_fail(void *store, void *ptr) {
+	(void)store;
 	(void)ptr;
 	return *(volatile int*)(NULL);
 }
@@ -210,10 +227,10 @@ void test_fail() {
 	struct orbit_module *m;
 	int ret;
 
-	m = orbit_create("test_module", checker_fail);
+	m = orbit_create("test_module", checker_fail, NULL);
 	assert(m != NULL);
 
-	ret = orbit_call(m, 0, NULL, NULL, 0);
+	ret = orbit_call(m, 0, NULL, NULL, NULL, 0);
 	printf("In parent: ret is %d\n", ret);
 }
 

@@ -10,8 +10,9 @@ typedef struct {
 	int arg2;
 } addition_args;
 
-unsigned long test_addition_task_entry(void *args)
+unsigned long test_addition_task_entry(void *store, void *args)
 {
+	(void)store;
 	addition_args *p = (addition_args *)args;
 	printf("Received addition args (%d, %d) from main program\n", p->arg1,
 	       p->arg2);
@@ -22,7 +23,7 @@ void test_addition()
 {
 	struct orbit_module *addition_ob;
 	pid_t main_pid = getpid();
-	addition_ob = orbit_create("test_addition", test_addition_task_entry);
+	addition_ob = orbit_create("test_addition", test_addition_task_entry, NULL);
 	TEST_ASSERT(addition_ob != NULL);
 	TEST_ASSERT(addition_ob->mpid == main_pid);
 	TEST_ASSERT(addition_ob->lobid > 0);
@@ -32,7 +33,7 @@ void test_addition()
 		int b = rand() % 1000;
 		addition_args args = { a, b };
 		printf("Calling orbit task to add (%d, %d)\n", a, b);
-		long ret = orbit_call(addition_ob, 0, NULL, &args,
+		long ret = orbit_call(addition_ob, 0, NULL, NULL, &args,
 				      sizeof(addition_args));
 		printf("Received result from orbit task=%ld\n", ret);
 		TEST_CHECK(a + b == ret);

@@ -11,8 +11,9 @@ typedef struct {
 	int arg2;
 } mult_args;
 
-unsigned long test_mult_task_entry(void *args)
+unsigned long test_mult_task_entry(void *store, void *args)
 {
+	(void)store;
 	mult_args *p = (mult_args *)args;
 	printf("Received mult args (%d, %d) from main program\n", p->arg1,
 	       p->arg2);
@@ -27,7 +28,7 @@ struct orbit_module * test_mult_(int no)
 	pid_t main_pid = getpid();
 	char name[32];
 	snprintf(name, 32, "test_mult_%d", no);
-	mult_ob = orbit_create(name, test_mult_task_entry);
+	mult_ob = orbit_create(name, test_mult_task_entry, NULL);
 	TEST_ASSERT(mult_ob != NULL);
 	TEST_ASSERT(mult_ob->mpid == main_pid);
 	// local obid should have the property of monotonic increasing
@@ -40,7 +41,7 @@ struct orbit_module * test_mult_(int no)
 		mult_args args = { a, b };
 		printf("Calling orbit task %d to multiply (%d, %d)\n",
 		       mult_ob->lobid, a, b);
-		long ret = orbit_call(mult_ob, 0, NULL, &args, sizeof(mult_args));
+		long ret = orbit_call(mult_ob, 0, NULL, NULL, &args, sizeof(mult_args));
 		printf("Received result from orbit task %d: %ld\n",
 		       mult_ob->lobid, ret);
 		TEST_CHECK(a * b == ret);
