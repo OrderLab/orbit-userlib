@@ -15,3 +15,10 @@ target_link_libraries(micro
   PRIVATE orbit
   Threads::Threads
 )
+
+add_executable(alloc-bench
+  alloc-bench.c
+)
+target_link_libraries(alloc-bench
+  PRIVATE orbit
+)
