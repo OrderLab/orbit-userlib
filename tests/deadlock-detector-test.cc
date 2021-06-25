@@ -201,7 +201,8 @@ struct orbit_scratch scratch;
 /* Original definition:
  * const trx_t* check_and_resolve(const lock_t* lock, trx_t* trx);
  */
-unsigned long check_and_resolve(void *args_) {
+unsigned long check_and_resolve(void *store, void *args_) {
+	(void)store;
 	const trx_t *victim_trx;
 	checker_args *args = (checker_args*)args_;
 
@@ -251,20 +252,20 @@ unsigned long check_and_resolve(void *args_) {
 	return (unsigned long)victim_trx;
 }
 
-struct trx_t **initialize_data(struct orbit_pool *pool) {
-	struct trx_t **trxs = (struct trx_t**)orbit_pool_alloc(pool,
+struct trx_t **initialize_data(struct orbit_allocator *alloc) {
+	struct trx_t **trxs = (struct trx_t**)orbit_alloc(alloc,
 			sizeof(*trxs) * NUM_TRANSACTIONS);
 
 	/* Create NUM_TRANSACTIONS Transactions each holding NUM_LOCKS locks */
 	for (int i = 0; i < NUM_TRANSACTIONS; ++i) {
-		struct trx_t* trx = (struct trx_t*) orbit_pool_alloc(pool, sizeof(*trx));
-		trx->locks = (struct lock_t**)orbit_pool_alloc(pool,
+		struct trx_t* trx = (struct trx_t*) orbit_alloc(alloc, sizeof(*trx));
+		trx->locks = (struct lock_t**)orbit_alloc(alloc,
 				sizeof(*trx->locks) * NUM_LOCKS);
 		trx->modifiable_field = 0;
 
 		for (int j = 0; j < NUM_LOCKS; ++j) {
 			struct lock_t* lock = (struct lock_t*)
-				orbit_pool_alloc(pool, sizeof(*lock));
+				orbit_alloc(alloc, sizeof(*lock));
 			lock->trx = trx;
 			trx->locks[j] = lock;
 		}
@@ -282,12 +283,15 @@ void perform_work() {
 int run(update_type ut, int N, bool do_check, bool use_orbit, int call_rate) {
 	assert(ut != UT_NONE);
 
-	orbit_scratch_create(&scratch, 4096);
+	orbit_scratch_set_pool(orbit_pool_create(4096 * 16));
+
+	orbit_scratch_create(&scratch);
 	struct orbit_pool *pool = orbit_pool_create(4096 * 16);
+	struct orbit_allocator *alloc = orbit_allocator_from_pool(pool, false);
 
-	struct trx_t **trxs = initialize_data(pool);
+	struct trx_t **trxs = initialize_data(alloc);
 
-	struct orbit_module *m = orbit_create("test_module", check_and_resolve);
+	struct orbit_module *m = orbit_create("test_module", check_and_resolve, NULL);
 
 	struct checker_args args = { trxs[0]->locks[0], trxs[0], trxs, UT_NONE, };
 
@@ -316,11 +320,11 @@ int run(update_type ut, int N, bool do_check, bool use_orbit, int call_rate) {
 
 			if (last) {
 				args.ut = ut;
-				ret = orbit_call_async(m, 0, 1, &pool,
+				ret = orbit_call_async(m, 0, 1, &pool, NULL,
 						&args, sizeof(args), &task);
 			} else {
 				ret = orbit_call_async(m, ORBIT_NORETVAL,
-					1, &pool, &args, sizeof(args), NULL);
+					1, &pool, NULL, &args, sizeof(args), NULL);
 			}
 
 			if (unlikely(ret != 0)) {
@@ -330,7 +334,7 @@ int run(update_type ut, int N, bool do_check, bool use_orbit, int call_rate) {
 			}
 		} else {
 			// orbit_call(m, pool, args);
-			check_and_resolve(&args);
+			check_and_resolve(NULL, &args);
 		}
 
 		/* Print progress */

@@ -18,7 +18,8 @@ using namespace std::chrono;
 
 int N = 1000000;
 
-unsigned long checker_empty(void *argbuf) {
+unsigned long checker_empty(void *store, void *argbuf) {
+	(void)store;
 	/* pointer to an int in the pool */
 	int *obj = *(int**)argbuf;
 	return (unsigned int)*obj;
@@ -26,22 +27,25 @@ unsigned long checker_empty(void *argbuf) {
 
 void bench_empty() {
 	struct orbit_pool *pool;
+	struct orbit_allocator *alloc;
 	struct orbit_module *m;
 	int *obj, ret;
 
 	pool = orbit_pool_create(4096);
 	assert(pool != NULL);
+	alloc = orbit_allocator_from_pool(pool, false);
+	assert(alloc != NULL);
 
-	obj = (int*)orbit_pool_alloc(pool, sizeof(int));
+	obj = (int*)orbit_alloc(alloc, sizeof(int));
 	*obj = 100;
 
-	m = orbit_create("test_module", checker_empty);
+	m = orbit_create("test_module", checker_empty, NULL);
 	assert(m != NULL);
 
 	auto t1 = high_resolution_clock::now();
 	for (int i = 0; i < N; ++i) {
 		*obj = i;
-		ret = orbit_call(m, 1, &pool, &obj, sizeof(obj));
+		ret = orbit_call(m, 1, &pool, NULL, &obj, sizeof(obj));
 		if (unlikely(ret != i)) {
 			printf("In parent: i=%d, ret=%d, obj=%d\n", i, ret, *obj);
 			abort();
@@ -56,22 +60,26 @@ void bench_empty() {
 
 void bench_empty_async() {
 	struct orbit_pool *pool;
+	struct orbit_allocator *alloc;
 	struct orbit_module *m;
 	int *obj, ret;
 
 	pool = orbit_pool_create(4096);
 	assert(pool != NULL);
+	alloc = orbit_allocator_from_pool(pool, false);
+	assert(alloc != NULL);
 
-	obj = (int*)orbit_pool_alloc(pool, sizeof(int));
+	obj = (int*)orbit_alloc(alloc, sizeof(int));
 	*obj = 100;
 
-	m = orbit_create("test_module", checker_empty);
+	m = orbit_create("test_module", checker_empty, NULL);
 	assert(m != NULL);
 
 	auto t1 = high_resolution_clock::now();
 	for (int i = 0; i < N - 1; ++i) {
 		*obj = i;
-		ret = orbit_call_async(m, ORBIT_NORETVAL, 1, &pool, &obj, sizeof(obj), NULL);
+		ret = orbit_call_async(m, ORBIT_NORETVAL, 1, &pool,
+				NULL, &obj, sizeof(obj), NULL);
 		if (unlikely(ret != 0)) {
 			printf("In parent: i=%d ret=%d, obj=0x%x\n", i, ret, *obj);
 			abort();
@@ -80,7 +88,7 @@ void bench_empty_async() {
 
 	*obj = 0xdeadbeef;
 	struct orbit_task task;
-	ret = orbit_call_async(m, 0, 1, &pool, &obj, sizeof(obj), &task);
+	ret = orbit_call_async(m, 0, 1, &pool, NULL, &obj, sizeof(obj), &task);
 	assert(ret == 0);
 
 	/* We do not wait on any former tasks, but only the last task.

@@ -797,6 +797,7 @@ TTASEventMutex::signal() UNIV_NOTHROW
 #define NTHD 4
 
 struct orbit_pool *pool = orbit_pool_create(4096 * 4);
+struct orbit_allocator *alloc = orbit_allocator_from_pool(pool, false);
 
 void loop(int n) {
 	for (int i = 0; i < n; ++i) {
@@ -805,7 +806,8 @@ void loop(int n) {
 }
 
 
-unsigned long orbit_func(void *aux) {
+unsigned long orbit_func(void *store, void *aux) {
+	(void)store;
 	std::atomic_uint64_t *counter = *(std::atomic_uint64_t**)aux;
 	loop(1000);
 	counter->fetch_add(1);
@@ -842,7 +844,7 @@ void *thread_func(void *aux) {
 		args->mutex->enter(srv_n_spin_wait_rounds, srv_spin_wait_delay, "", 0);
 
 		orbit_task task;
-		ret = orbit_call_async(args->ob, 0, 1, &pool, &args->counter,
+		ret = orbit_call_async(args->ob, 0, 1, &pool, NULL, &args->counter,
 				sizeof(args->counter), &task);
 		errno_assert("orbit_call_async", (ret == 0));
 
@@ -869,13 +871,13 @@ int main(int argc, const char *argv[]) {
 
 	std::cout << "Seed is " << seed << std::endl;
 
-	orbit_module *ob = orbit_create("", orbit_func);
+	orbit_module *ob = orbit_create("", orbit_func, NULL);
 
-	TTASEventMutex *mutex = (TTASEventMutex*)orbit_pool_alloc(pool, sizeof(TTASEventMutex));
+	TTASEventMutex *mutex = (TTASEventMutex*)orbit_alloc(alloc, sizeof(TTASEventMutex));
 	new (mutex) TTASEventMutex();
 	mutex->init("", 0);
 
-	std::atomic_uint64_t *counter = (std::atomic_uint64_t*)orbit_pool_alloc(pool, sizeof(std::atomic_uint64_t));
+	std::atomic_uint64_t *counter = (std::atomic_uint64_t*)orbit_alloc(alloc, sizeof(std::atomic_uint64_t));
 
 	thread_args args = {
 		.ob = ob,
