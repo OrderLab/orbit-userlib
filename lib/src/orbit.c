@@ -1,4 +1,6 @@
 #include "orbit.h"
+#include "linear_allocator.h"
+#include "bitmap_allocator.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -157,11 +159,11 @@ static long orbit_call_inner(struct orbit_module *module, unsigned long flags,
 
 	for (size_t i = 0; i < npool; ++i) {
 		struct orbit_pool *pool = pools[i];
-		unsigned long start = (unsigned long)pool->rawptr;
-		/* TODO: directly using `used` is not actually safe.
+		unsigned long start = (unsigned long)pool->data_start;
+		/* TODO: directly using data_{start,length} is not actually safe.
 		 * However, if we hold all alloc->lock until orbit_call ends,
 		 * it might be too long. */
-		unsigned long length = (unsigned long)round_up_page(pool->used);
+		unsigned long length = (unsigned long)round_up_page(pool->data_length);
 		pools_kernel[i].start = start;
 		pools_kernel[i].end = start + length;
 		pools_kernel[i].mode = pool->mode;
@@ -228,7 +230,9 @@ struct orbit_pool *orbit_pool_create_at(size_t init_pool_size, void *addr) {
 
 	pool->rawptr = area;
 	pool->length = init_pool_size;
-	pool->used = 0;
+	/* Creating allocator on pool will rewrite these values. */
+	pool->data_start = area;
+	pool->data_length = 0;
 	pool->mode = ORBIT_COW;
 
 	return pool;
@@ -240,78 +244,36 @@ pool_malloc_fail:
 }
 // void orbit_pool_destroy(pool);
 
-struct alloc_meta {
-	size_t size;
-};
 
-struct orbit_allocator *orbit_allocator_create(void *start, size_t length,
-		size_t *allocated, bool use_meta)
-{
-	int ret;
-	struct orbit_allocator* alloc;
+/* ====== Allocator API ===== */
 
-	if (!allocated)
-		return NULL;
-
-	alloc = (struct orbit_allocator*)malloc(sizeof(struct orbit_allocator));
-	if (alloc == NULL) return NULL;
-
-	ret = pthread_spin_init(&alloc->lock, PTHREAD_PROCESS_PRIVATE);
-	if (ret != 0) goto lock_init_fail;
-
-	alloc->start = start;
-	alloc->length = length;
-	alloc->allocated = allocated;
-	alloc->use_meta = use_meta;
-
-	return alloc;
-
-lock_init_fail:
-	free(alloc);
-	return NULL;
-}
-
+/* Destroy an allocator */
 void orbit_allocator_destroy(struct orbit_allocator *alloc)
 {
-	pthread_spin_destroy(&alloc->lock);
-	memset(alloc, 0, sizeof(*alloc));
-	free(alloc);
+	alloc->vtable->destroy(alloc);
 }
 
+/* Create an allocator using underlying pool */
 struct orbit_allocator *orbit_allocator_from_pool(struct orbit_pool *pool, bool use_meta)
 {
-	return orbit_allocator_create(pool->rawptr, pool->length, &pool->used, use_meta);
+	if (use_meta)
+		return orbit_bitmap_allocator_create(pool->rawptr, pool->length,
+				&pool->data_start, &pool->data_length);
+
+	return orbit_linear_allocator_create(pool->rawptr, pool->length,
+			&pool->data_start, &pool->data_length, use_meta);
 }
 
-/* TODO: currently we are ony using a linear allocating mechanism.
- * In the future we will need to design an allocation algorithm aiming for
- * compactness of related data. */
 void *__orbit_alloc(struct orbit_allocator *alloc, size_t size,
-	const char *file, int line)
+			const char *file, int line)
 {
 	void *ptr;
-	int ret;
 
-	if (alloc->use_meta)
-		size += sizeof(struct alloc_meta);
-
-	ret = pthread_spin_lock(&alloc->lock);
-	if (ret != 0) return NULL;
-
-	if (size > alloc->length - *alloc->allocated) {
-		fprintf(stderr, "Pool %p is full.\n", alloc);
-		abort();
-		return NULL;
-	}
-
-	ptr = (char*)alloc->start + *alloc->allocated;
-
-	*alloc->allocated += size;
-
-	pthread_spin_unlock(&alloc->lock);
+	ptr = alloc->vtable->alloc(alloc, size);
 
 #define OUTPUT_ORBIT_ALLOC 0
 #if OUTPUT_ORBIT_ALLOC
+	if (!ptr) return NULL;
 	void __mysql_orbit_alloc_callback(void *, size_t, const char *, int);
 	__mysql_orbit_alloc_callback(ptr, size, file, line);
 #else
@@ -319,42 +281,17 @@ void *__orbit_alloc(struct orbit_allocator *alloc, size_t size,
 	(void)line;
 #endif
 
-	if (alloc->use_meta)
-		*(struct alloc_meta*)ptr = (struct alloc_meta) {
-			.size = size - sizeof(struct alloc_meta),
-		};
-
-	return (struct alloc_meta*)ptr + 1;
+	return ptr;
 }
 
 void orbit_free(struct orbit_allocator *alloc, void *ptr)
 {
-	/* Let it leak. */
-	(void)alloc;
-	(void)ptr;
-	/* In real allocator:
-	if (!alloc->use_meta)
-		return; */
+	alloc->vtable->free(alloc, ptr);
 }
 
 void *orbit_realloc(struct orbit_allocator *alloc, void *oldptr, size_t newsize)
 {
-	void *mem;
-	struct alloc_meta *meta;
-
-	if (!oldptr || !alloc->use_meta)
-		return orbit_alloc(alloc, newsize);
-
-	meta = (struct alloc_meta*)oldptr - 1;
-	if (meta->size >= newsize) {
-		meta->size = newsize;
-		return oldptr;
-	}
-
-	mem = orbit_alloc(alloc, newsize);
-	memcpy(mem, oldptr, meta->size);
-	orbit_free(alloc, oldptr);
-	return mem;
+	return alloc->vtable->realloc(alloc, oldptr, newsize);
 }
 
 
@@ -373,11 +310,11 @@ int orbit_scratch_create(struct orbit_scratch *s)
 {
 	struct orbit_pool *info_s = info.scratch_pool;
 
-	if (!info_s || info_s->length == info_s->used)
+	if (!info_s || info_s->length == info_s->data_length)
 		return -1;
 
-	s->ptr = (char*)info_s->rawptr + info_s->used;
-	s->size_limit = info_s->length - info_s->used;
+	s->ptr = (char*)info_s->rawptr + info_s->data_length;
+	s->size_limit = info_s->length - info_s->data_length;
 	s->cursor = 0;
 	s->count = 0;
 	s->any_alloc = NULL;
@@ -399,9 +336,10 @@ struct orbit_allocator *orbit_scratch_open_any(struct orbit_scratch *s, bool use
 	record->type = ORBIT_ANY;
 	record->any.length = 0;  /* Unknown size, filled by `conclude' */
 
-	s->any_alloc = orbit_allocator_create(
+	s->any_alloc = orbit_linear_allocator_create(
 			record->any.data,
 			s->size_limit - (record->any.data - (char*)s->ptr),
+			NULL,
 			&record->any.length,
 			use_meta);
 
@@ -500,9 +438,9 @@ static void scratch_trunc(const struct orbit_scratch *s)
 {
 	struct orbit_pool *info_s = info.scratch_pool;
 
-	info_s->used += round_up_page(s->cursor);
+	info_s->data_length += round_up_page(s->cursor);
 
-	if (info_s->used == info_s->length) {
+	if (info_s->data_length == info_s->length) {
 		/* TODO: unmap safety in the kernel
 		 * If we decide to copy page range at recvv instead of at sendv,
 		 * we need to consider another mechanism to unmap pages. */
