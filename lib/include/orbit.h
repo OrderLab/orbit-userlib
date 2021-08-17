@@ -216,13 +216,18 @@ unsigned long orbit_commit(void);
  * context and will then call the real function. We do not really need....*/
 // void obCallWrapper(orbit_entry entry_point, void *auxptr);
 
-/* Return a memory allocation pool. */
-struct orbit_pool *create_orbit_pool_at(struct orbit_module *ob,
-					size_t init_pool_size, void *addr);
-struct orbit_pool *create_orbit_pool(struct orbit_module *ob,
+/* Create an return a memory allocation pool of size 'init_pool_size'
+ * to be used by an orbit.
+ *
+ * If argument <ob> is specified, the pool will be created and mapped to the
+ * address space of <ob>. If <ob> is NULL, the pool will be created and mapped
+ * later to a new orbit, which is a discouraged way.
+*/
+struct orbit_pool *orbit_pool_create(struct orbit_module *ob,
 				     size_t init_pool_size);
-struct orbit_pool *orbit_pool_create(size_t init_pool_size);
-struct orbit_pool *orbit_pool_create_at(size_t init_pool_size, void *addr);
+struct orbit_pool *orbit_pool_create_at(struct orbit_module *ob,
+					size_t init_pool_size, void *addr);
+
 // void obPoolDestroy(pool);
 
 

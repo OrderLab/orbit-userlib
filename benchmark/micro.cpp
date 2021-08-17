@@ -31,7 +31,11 @@ void bench_empty() {
 	struct orbit_module *m;
 	int *obj, ret;
 
-	pool = orbit_pool_create(4096);
+	m = orbit_create("test_module", checker_empty, NULL);
+	assert(m != NULL);
+
+	// Create the pool to be used by the main and this specific orbit
+	pool = orbit_pool_create(m, 4096);
 	assert(pool != NULL);
 	alloc = orbit_allocator_from_pool(pool, false);
 	assert(alloc != NULL);
@@ -39,8 +43,6 @@ void bench_empty() {
 	obj = (int*)orbit_alloc(alloc, sizeof(int));
 	*obj = 100;
 
-	m = orbit_create("test_module", checker_empty, NULL);
-	assert(m != NULL);
 
 	auto t1 = high_resolution_clock::now();
 	for (int i = 0; i < N; ++i) {
@@ -64,7 +66,11 @@ void bench_empty_async() {
 	struct orbit_module *m;
 	int *obj, ret;
 
-	pool = orbit_pool_create(4096);
+	m = orbit_create("test_module", checker_empty, NULL);
+	assert(m != NULL);
+
+	// Create the pool to be used by the main and this specific orbit
+	pool = orbit_pool_create(m, 4096);
 	assert(pool != NULL);
 	alloc = orbit_allocator_from_pool(pool, false);
 	assert(alloc != NULL);
@@ -72,8 +78,6 @@ void bench_empty_async() {
 	obj = (int*)orbit_alloc(alloc, sizeof(int));
 	*obj = 100;
 
-	m = orbit_create("test_module", checker_empty, NULL);
-	assert(m != NULL);
 
 	auto t1 = high_resolution_clock::now();
 	for (int i = 0; i < N - 1; ++i) {

@@ -283,15 +283,17 @@ void perform_work() {
 int run(update_type ut, int N, bool do_check, bool use_orbit, int call_rate) {
 	assert(ut != UT_NONE);
 
-	orbit_scratch_set_pool(orbit_pool_create(4096 * 16));
+	struct orbit_module *m = orbit_create("test_module", check_and_resolve, NULL);
+	assert(m != NULL);
 
+	struct orbit_pool *scratch_pool = orbit_pool_create(m, 4096 * 16);
+	assert(scratch_pool != NULL);
+	orbit_scratch_set_pool(scratch_pool);
 	orbit_scratch_create(&scratch);
-	struct orbit_pool *pool = orbit_pool_create(4096 * 16);
+	struct orbit_pool *pool = orbit_pool_create(m, 4096 * 16);
 	struct orbit_allocator *alloc = orbit_allocator_from_pool(pool, false);
 
 	struct trx_t **trxs = initialize_data(alloc);
-
-	struct orbit_module *m = orbit_create("test_module", check_and_resolve, NULL);
 
 	struct checker_args args = { trxs[0]->locks[0], trxs[0], trxs, UT_NONE, };
 

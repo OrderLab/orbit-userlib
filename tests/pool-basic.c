@@ -42,14 +42,15 @@ void test_pool_add() {
 	add_args *args;
 	long ret;
 
-	pool = orbit_pool_create(4096);
+	add_ob = orbit_create("test_pool_add", pool_add_task_entry, NULL);
+	TEST_ASSERT(add_ob != NULL);
+	TEST_ASSERT(add_ob->gobid > 0);
+
+	pool = orbit_pool_create(add_ob, 4096);
 	TEST_ASSERT(pool != NULL);
 	alloc = orbit_allocator_from_pool(pool, false);
 	TEST_ASSERT(alloc != NULL);
 
-	add_ob = orbit_create("test_pool_add", pool_add_task_entry, NULL);
-	TEST_ASSERT(add_ob != NULL);
-	TEST_ASSERT(add_ob->gobid > 0);
 	for (int i = 1; i <= 5; i++) {
 		int a = i * 101;
 		int b = i * i * 11;
@@ -76,14 +77,14 @@ void test_pool_pointer() {
 	pointer_args *args;
 	long ret, sum;
 
-	pool = orbit_pool_create(4096);
-	TEST_ASSERT(pool != NULL);
-	alloc = orbit_allocator_from_pool(pool, false);
-	TEST_ASSERT(alloc != NULL);
-
 	ptr_ob = orbit_create("test_pool_pointer", pool_pointer_task_entry, NULL);
 	TEST_ASSERT(ptr_ob != NULL);
 	TEST_ASSERT(ptr_ob->gobid > 0);
+
+	pool = orbit_pool_create(ptr_ob, 4096);
+	TEST_ASSERT(pool != NULL);
+	alloc = orbit_allocator_from_pool(pool, false);
+	TEST_ASSERT(alloc != NULL);
 
 	for (int i = 1; i <= 3; i++) {
 		args = (pointer_args *)orbit_alloc(alloc, sizeof(pointer_args));

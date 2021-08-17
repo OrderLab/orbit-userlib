@@ -796,8 +796,8 @@ TTASEventMutex::signal() UNIV_NOTHROW
 
 #define NTHD 4
 
-struct orbit_pool *pool = orbit_pool_create(4096 * 4);
-struct orbit_allocator *alloc = orbit_allocator_from_pool(pool, false);
+struct orbit_pool *pool;
+struct orbit_allocator *alloc;
 
 void loop(int n) {
 	for (int i = 0; i < n; ++i) {
@@ -872,6 +872,11 @@ int main(int argc, const char *argv[]) {
 	std::cout << "Seed is " << seed << std::endl;
 
 	orbit_module *ob = orbit_create("", orbit_func, NULL);
+	assert(ob != NULL);
+	pool = orbit_pool_create(ob, 4096 * 4);
+	assert(pool != NULL);
+
+	alloc = orbit_allocator_from_pool(pool, false);
 
 	TTASEventMutex *mutex = (TTASEventMutex*)orbit_alloc(alloc, sizeof(TTASEventMutex));
 	new (mutex) TTASEventMutex();

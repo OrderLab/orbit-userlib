@@ -59,14 +59,16 @@ static struct {
 
 static void scratch_renew(size_t size_hint)
 {
+	// FIXME: should create the pool for a specific orbit
 	if (/* info.auto_renew && */ !info.scratch_pool)
-		info.scratch_pool = orbit_pool_create(size_hint);
+		info.scratch_pool = orbit_pool_create(NULL, size_hint);
 }
 
 static void info_init(void)
 {
+	// FIXME: should create the pool for a specific orbit
 	(void)scratch_renew;
-	info.scratch_pool = orbit_pool_create(1024 * 1024);
+	info.scratch_pool = orbit_pool_create(NULL, 1024 * 1024);
 }
 
 long orbit_taskid;
@@ -208,25 +210,15 @@ unsigned long orbit_commit(void) {
 	return syscall(SYS_ORBIT_COMMIT);
 }
 
-/* Return a memory allocation pool. */
-inline struct orbit_pool *orbit_pool_create(size_t init_pool_size) {
-	const int DBG = 0;
-	void *MMAP_HINT = DBG ? (void*)0x8000000 : NULL;
-	return create_orbit_pool_at(NULL, init_pool_size, MMAP_HINT);
-}
-
-inline struct orbit_pool *create_orbit_pool(struct orbit_module *ob,
+inline struct orbit_pool *orbit_pool_create(struct orbit_module *ob,
 				     size_t init_pool_size)
 {
-	return create_orbit_pool_at(ob, init_pool_size, NULL);
+	const int DBG = 0;
+	void *MMAP_HINT = DBG ? (void*)0x8000000 : NULL;
+	return orbit_pool_create_at(ob, init_pool_size, MMAP_HINT);
 }
 
-inline struct orbit_pool *orbit_pool_create_at(size_t init_pool_size, void *addr)
-{
-	return create_orbit_pool_at(NULL, init_pool_size, addr);
-}
-
-struct orbit_pool *create_orbit_pool_at(struct orbit_module *ob,
+struct orbit_pool *orbit_pool_create_at(struct orbit_module *ob,
 					size_t init_pool_size, void *addr)
 {
 	struct orbit_pool *pool;
@@ -241,9 +233,7 @@ struct orbit_pool *create_orbit_pool_at(struct orbit_module *ob,
 		long ret = syscall(SYS_ORBIT_MMAP_PAIR, ob->gobid, addr,
 				   init_pool_size, PROT_READ | PROT_WRITE,
 				   MAP_PRIVATE | MAP_ANONYMOUS);
-		if (ret < 0)
-			area = NULL;
-		area = (void *) ret;
+		area = ret < 0 ? NULL : (void *) ret;
 	} else {
 		area = mmap(addr, init_pool_size, PROT_READ | PROT_WRITE,
 			    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
