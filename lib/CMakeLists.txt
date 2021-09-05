@@ -5,6 +5,7 @@ include_directories(include)
 
 add_library(orbit STATIC SHARED
   src/orbit.c
+  src/orbit.cpp
 )
 target_link_libraries(orbit
   Threads::Threads

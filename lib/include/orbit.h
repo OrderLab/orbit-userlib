@@ -1,13 +1,18 @@
 #ifndef __ORBIT_H__
 #define __ORBIT_H__
 
+#ifdef __cplusplus
+#include <cstddef>
+#include <cstring>
+#include <memory>
+extern "C" {
+#else
 #include <stddef.h>
 #include <stdbool.h>
-#include <pthread.h>
-
-#ifdef __cplusplus
-extern "C" {
+#include <string.h>
 #endif
+
+#include <pthread.h>
 
 #define ORBIT_NORETVAL		2
 
@@ -270,8 +275,15 @@ struct orbit_allocator *orbit_allocator_from_pool(struct orbit_pool *pool, bool 
 
 void *__orbit_alloc(struct orbit_allocator *alloc, size_t size,
 			const char *file, int line);
+static inline void *__orbit_calloc(struct orbit_allocator *alloc, size_t size,
+			const char *file, int line)
+{
+	return memset(__orbit_alloc((alloc), size, file, line), 0, size);
+}
 #define orbit_alloc(alloc, size) \
 	__orbit_alloc(alloc, size, __FILE__, __LINE__)
+#define orbit_calloc(alloc, size) \
+	__orbit_calloc(alloc, size, __FILE__, __LINE__)
 void orbit_free(struct orbit_allocator *alloc, void *ptr);
 void *orbit_realloc(struct orbit_allocator *alloc, void *oldptr, size_t newsize);
 
@@ -398,6 +410,54 @@ struct orbit_repr *orbit_scratch_next(struct orbit_scratch *s);
 
 #ifdef __cplusplus
 }
+
+namespace orbit {
+
+void *__orbit_allocate_wrapper(orbit_allocator *alloc, std::size_t n, std::size_t type_size);
+void __orbit_deallocate_wrapper(orbit_allocator *alloc, void *ptr, std::size_t n) noexcept;
+
+extern orbit_allocator *__global_allocator;
+void set_global_allocator(orbit_allocator *alloc);
+
+template<class T>
+struct global_allocator {
+public:
+	typedef T value_type;
+	T* allocate(std::size_t n) {
+		return static_cast<T*>(__orbit_allocate_wrapper(
+					__global_allocator, n, sizeof(T)));
+	}
+	void deallocate(T *p, std::size_t n) noexcept {
+		__orbit_deallocate_wrapper(__global_allocator, p, n);
+	}
+};
+
+/* A shim for new and delete operator. Inherit this struct to make the
+ * subclass use orbit global allocator by default. */
+struct global_new_operator {
+	static void* operator new(std::size_t size);
+	static void operator delete(void *ptr) noexcept;
+};
+
+// Note: this is currently only a wrapper on the orbit_alloc.
+// Destructing this struct won't destroy the orbit_allocator.
+template<class T>
+struct allocator {
+	typedef T value_type;
+	allocator(orbit_allocator *alloc) : alloc(alloc) {}
+	~allocator() {}
+	T* allocate(std::size_t n) {
+		return static_cast<T*>(__orbit_allocate_wrapper(alloc, n, sizeof(T)));
+	}
+	void deallocate(T *p, std::size_t n) noexcept {
+		__orbit_deallocate_wrapper(alloc, p, n);
+	}
+private:
+	orbit_allocator *alloc;
+};
+
+}  // namespace orbit
+
 #endif
 
 #endif /* __ORBIT_H__ */
