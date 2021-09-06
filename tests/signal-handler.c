@@ -14,7 +14,15 @@ typedef void (*mysigfunc) (int signo);
 
 #define CHILD_SLEEP_TIME 3  // 3 seconds
 
-bool child_stopped = false;
+bool child_stopped, waited_child;
+int child_pid;
+
+void reset()
+{
+	child_stopped = false;
+	waited_child = false;
+	child_pid = -1;
+}
 
 void child_main(bool is_orbit)
 {
@@ -34,6 +42,9 @@ void reaper(int signo)
 	while ((pid = waitpid(-1, &exitstatus, WNOHANG)) > 0)
 	{
 		printf("parent reaps child pid %d\n", pid);
+		// if we successfully catch the child pid status
+		if (pid == child_pid)
+			waited_child = true;
 	}
 	printf("parent reaper finished\n");
 	child_stopped = true;
@@ -52,8 +63,7 @@ mysigfunc install_sighandler(int signo, mysigfunc func)
 
 int fork_version()
 {
-	int pid;
-	switch (pid = fork()) {
+	switch (child_pid = fork()) {
 	case -1:
 		perror("could not fork child process\n");
 		return -1;
@@ -62,7 +72,7 @@ int fork_version()
 		child_main(false);
 		return 0;
 	}
-	printf("created child %d\n", pid);
+	printf("created child %d\n", child_pid);
 	/* in parent */
 	int tries = 0;
 	while (!child_stopped && tries < 2) {
@@ -72,7 +82,9 @@ int fork_version()
 	// sleep for twice as long as child, if at this point no signal
 	// is received, the test fails
 	TEST_ASSERT(child_stopped);
-	printf("successfully reaped child %d\n", pid);
+	if (!TEST_CHECK(waited_child))
+		printf("child stopped, but parent did not get wait status\n");
+	printf("successfully reaped child %d\n", child_pid);
 	return 0;
 }
 
@@ -83,14 +95,14 @@ unsigned long orbit_child_entry(void *store, void *args)
 
 int orbit_version()
 {
-	int pid, dummy_arg;
+	int dummy_arg;
 	struct orbit_module *child_orbit;
 	child_orbit = orbit_create("orbit_child", orbit_child_entry, NULL);
 	TEST_ASSERT(child_orbit != NULL);
-	pid = child_orbit->gobid;
+	child_pid = child_orbit->gobid;
 	orbit_call_async(child_orbit, 0, 0, NULL, NULL, &dummy_arg,
 			 sizeof(int), NULL);
-	printf("created child %d\n", pid);
+	printf("created child %d\n", child_pid);
 	/* in parent */
 	int tries = 0;
 	while (!child_stopped && tries < 2) {
@@ -100,15 +112,18 @@ int orbit_version()
 	// sleep for twice as long as child, if at this point no signal
 	// is received, the test fails
 	TEST_ASSERT(child_stopped);
-	printf("successfully reaped child %d\n", pid);
+	if (!TEST_CHECK(waited_child))
+		printf("child stopped, but parent did not get wait status\n");
+	printf("successfully reaped child %d\n", child_pid);
 	return 0;
 }
 
 void test_signal_handler()
 {
+	reset();
 	install_sighandler(SIGCHLD, reaper);
 	fork_version();
-	child_stopped = false; // reset
+	reset(); //reset
 	orbit_version();
 }
 
