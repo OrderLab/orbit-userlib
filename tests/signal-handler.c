@@ -12,7 +12,8 @@
 
 typedef void (*mysigfunc) (int signo);
 
-#define CHILD_SLEEP_TIME 3  // 3 seconds
+#define UNUSED __attribute__ ((unused))
+#define CHILD_SLEEP_TIME 2  // 2 seconds
 
 bool child_stopped, waited_child;
 int child_pid;
@@ -33,9 +34,8 @@ void child_main(bool is_orbit)
 	exit(0);
 }
 
-void reaper(int signo)
+void reaper(int signo UNUSED)
 {
-	int save_errno = errno;
 	int pid;	/* process id of dead child process */
 	int exitstatus; /* its exit status */
 	printf("parent reaper called\n");
@@ -46,7 +46,7 @@ void reaper(int signo)
 		if (pid == child_pid)
 			waited_child = true;
 	}
-	printf("parent reaper finished\n");
+	printf("parent reaper finished, waitpid ret=%d\n", pid);
 	child_stopped = true;
 }
 
@@ -88,9 +88,10 @@ int fork_version()
 	return 0;
 }
 
-unsigned long orbit_child_entry(void *store, void *args)
+unsigned long orbit_child_entry(void *store UNUSED, void *args UNUSED)
 {
 	child_main(true);
+	return 0;
 }
 
 int orbit_version()
