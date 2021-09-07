@@ -103,7 +103,7 @@ int orbit_version()
 	child_pid = child_orbit->gobid;
 	orbit_call_async(child_orbit, 0, 0, NULL, NULL, &dummy_arg,
 			 sizeof(int), NULL);
-	printf("created child %d\n", child_pid);
+	printf("created orbit %d\n", child_pid);
 	/* in parent */
 	int tries = 0;
 	while (!child_stopped && tries < 2) {
@@ -114,8 +114,8 @@ int orbit_version()
 	// is received, the test fails
 	TEST_ASSERT(child_stopped);
 	if (!TEST_CHECK(waited_child))
-		printf("child stopped, but parent did not get wait status\n");
-	printf("successfully reaped child %d\n", child_pid);
+		printf("orbit stopped, but parent did not get wait status\n");
+	printf("successfully reaped orbit %d\n", child_pid);
 	return 0;
 }
 

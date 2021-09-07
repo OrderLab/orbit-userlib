@@ -9,6 +9,7 @@ set(UNIT_TEST_SOURCES
   destroy-orbit.c
   async-update-basic.c
   signal-handler.c
+  crash-handling.c
 )
 
 # they not been rewritten into unit tests
