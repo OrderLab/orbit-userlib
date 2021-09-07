@@ -62,9 +62,13 @@ void test_orbit_crash()
 			 sizeof(struct task_args), NULL);
 	TEST_ASSERT(ret == 0);
 	printf("created orbit %d\n", buggy_orbit->gobid);
-	sleep(3);
+	int remaining = sleep(3);
+	if (remaining != 0) {
+		printf("sleep was interrupted, remaining time %d\n", remaining);
+		sleep(remaining);
+	}
 	bool gone = orbit_gone(buggy_orbit);
-	printf("check existence of orbit %d: %s", buggy_orbit->gobid, gone ?
+	printf("check existence of orbit %d: %s\n", buggy_orbit->gobid, gone ?
 	       "no" : "yes");
 	if (!gone) {
 		TEST_MSG("orbit should not exist at this point...\n");
@@ -86,6 +90,8 @@ void test_orbit_crash()
 		if (!TEST_CHECK(result == left + right))
 			TEST_MSG("Expected :%d; Received: %d\n",
 				 left + right, result);
+	} else {
+		printf("orbit is gone as expected at this point\n");
 	}
 }
 
