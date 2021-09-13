@@ -187,6 +187,8 @@ struct orbit_module *orbit_create(const char *module_name,
 		orbit_entry entry_func, void*(*init_func)(void));
 // void obDestroy(orbit_module*);
 
+bool is_orbit_context(void);
+
 /*
  * Create an orbit call.
  *
@@ -339,6 +341,44 @@ int orbit_scratch_push_update(struct orbit_scratch *s, void *ptr, size_t length)
 /* Push orbit_any to scratch */
 int orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length);
 
+// TODO: rewrite two versions with better C macro and pure C++11 arg forward.
+// We can also provide compiler support for structuring lambda s.t. it can
+// written ergonomically and be sent safely.
+#define orbit_scratch_run1(s, arg1t, arg1n, body) do { \
+		unsigned long argv[] { (unsigned long)(arg1n), }; \
+		unsigned long (*f)(size_t argc, unsigned long argv[]) = \
+		[](size_t argc, unsigned long argv[]) -> unsigned long { \
+			arg1t arg1n = (arg1t)argv[0]; \
+			body; \
+			return 0; \
+		}; \
+		orbit_scratch_push_operation(s, f, 1, argv); \
+	} while (0)
+#define orbit_scratch_run2(s, arg1t, arg1n, arg2t, arg2n, body) do { \
+		unsigned long argv[] { (unsigned long)(arg1n), (unsigned long)(arg2n), }; \
+		unsigned long (*f)(size_t argc, unsigned long argv[]) = \
+		[](size_t argc, unsigned long argv[]) -> unsigned long { \
+			arg1t arg1n = (arg1t)argv[0]; \
+			arg2t arg2n = (arg2t)argv[1]; \
+			body; \
+			return 0; \
+		}; \
+		orbit_scratch_push_operation(s, f, 2, argv); \
+	} while (0)
+#define orbit_scratch_run3(s, arg1t, arg1n, arg2t, arg2n, arg3t, arg3n, body) do { \
+		unsigned long argv[] { (unsigned long)(arg1n), \
+			(unsigned long)(arg2n), (unsigned long)(arg3n) }; \
+		unsigned long (*f)(size_t argc, unsigned long argv[]) = \
+		[](size_t argc, unsigned long argv[]) -> unsigned long { \
+			arg1t arg1n = (arg1t)argv[0]; \
+			arg2t arg2n = (arg2t)argv[1]; \
+			arg3t arg3n = (arg3t)argv[2]; \
+			body; \
+			return 0; \
+		}; \
+		orbit_scratch_push_operation(s, f, 3, argv); \
+	} while (0)
+
 /*
  * Create a pending "any" record in the scratch and return an allocator.
  *
@@ -424,12 +464,19 @@ struct global_allocator {
 public:
 	typedef T value_type;
 	T* allocate(std::size_t n) {
-		return static_cast<T*>(__orbit_allocate_wrapper(
+		if (__global_allocator) {
+			return static_cast<T*>(__orbit_allocate_wrapper(
 					__global_allocator, n, sizeof(T)));
+		}
+		return std::allocator<T>().allocate(n);
 	}
 	void deallocate(T *p, std::size_t n) noexcept {
-		__orbit_deallocate_wrapper(__global_allocator, p, n);
+		if (__global_allocator)
+			return __orbit_deallocate_wrapper(__global_allocator, p, n);
+		std::allocator<T>().deallocate(p, n);
 	}
+	bool operator==(const global_allocator &rhs) const { return true; }
+	bool operator!=(const global_allocator &rhs) const { return true; }
 };
 
 /* A shim for new and delete operator. Inherit this struct to make the
@@ -447,10 +494,14 @@ struct allocator {
 	allocator(orbit_allocator *alloc) : alloc(alloc) {}
 	~allocator() {}
 	T* allocate(std::size_t n) {
-		return static_cast<T*>(__orbit_allocate_wrapper(alloc, n, sizeof(T)));
+		if (alloc)
+			return static_cast<T*>(__orbit_allocate_wrapper(alloc, n, sizeof(T)));
+		return std::allocator<T>().allocate(n);
 	}
 	void deallocate(T *p, std::size_t n) noexcept {
-		__orbit_deallocate_wrapper(alloc, p, n);
+		if (alloc)
+			return __orbit_deallocate_wrapper(alloc, p, n);
+		std::allocator<T>().deallocate(p, n);
 	}
 private:
 	orbit_allocator *alloc;

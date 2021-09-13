@@ -72,6 +72,7 @@ static void info_init(void)
 }
 
 long orbit_taskid;
+static bool orbit_context = false;
 
 struct orbit_module *orbit_create(const char *module_name,
 		orbit_entry entry_func, void*(*init_func)(void))
@@ -96,6 +97,7 @@ struct orbit_module *orbit_create(const char *module_name,
 	} else if (gobid == 0) {
 		/* We are now in child, we should run the function  */
 		/* FIXME: we should create scratch in orbit! */
+		orbit_context = true;  /* Should this be in info_init()? */
 		// info_init();
 		(void)info_init;
 		if (init_func)
@@ -129,6 +131,11 @@ struct orbit_module *orbit_create(const char *module_name,
 	else
 		strcpy(ob->name, "anonymous");
 	return ob;
+}
+
+bool is_orbit_context(void)
+{
+	return orbit_context;
 }
 
 struct pool_range_kernel {
