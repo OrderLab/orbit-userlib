@@ -288,7 +288,8 @@ static inline void *__orbit_calloc(struct orbit_allocator *alloc, size_t size,
 	__orbit_calloc(alloc, size, __FILE__, __LINE__)
 void orbit_free(struct orbit_allocator *alloc, void *ptr);
 void *orbit_realloc(struct orbit_allocator *alloc, void *oldptr, size_t newsize);
-
+#define orbit_allocated_by(ptr, alloc) \
+	(alloc != NULL && (ptr >= alloc->start) && (ptr < alloc->start + alloc->length))
 
 /* ===== Scratch ADT ===== */
 
