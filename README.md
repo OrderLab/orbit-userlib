@@ -1,5 +1,7 @@
 # Obi-Wan User-Level Library
 
+![build workflow](https://github.com/OrderLab/obiwan-userlib/actions/workflows/build.yml/badge.svg)
+
 ## Usage
 
 ```bash

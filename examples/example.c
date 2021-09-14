@@ -74,18 +74,20 @@ void test_plus_one_pool() {
 	struct orbit_module *m;
 	int *obj, ret;
 
-	pool = orbit_pool_create(4096);
+	/* Early implementation of orbit_create will still copy the whole
+	 * address space.  Set an initial value for debug use. */
+	obj = &ret;
+	*obj = 10;
+
+	m = orbit_create("test_module", checker_plus_one_pool, NULL);
+	assert(m != NULL);
+
+	pool = orbit_pool_create(m, 4096);
 	assert(pool != NULL);
 	alloc = orbit_allocator_from_pool(pool, false);
 	assert(alloc != NULL);
 
 	obj = (int*)orbit_alloc(alloc, sizeof(int));
-	/* Early implementation of orbit_create will still copy the whole
-	 * address space.  Set an initial value for debug use. */
-	*obj = 100;
-
-	m = orbit_create("test_module", checker_plus_one_pool, NULL);
-	assert(m != NULL);
 
 	*obj = 200;
 
@@ -102,16 +104,15 @@ void test_multiple_plus_one() {
 	struct orbit_module *m;
 	int *obj, ret;
 
-	pool = orbit_pool_create(4096);
+	m = orbit_create("test_module", checker_plus_one_pool, NULL);
+	assert(m != NULL);
+
+	pool = orbit_pool_create(m, 4096);
 	assert(pool != NULL);
 	alloc = orbit_allocator_from_pool(pool, false);
 	assert(alloc != NULL);
 
 	obj = (int*)orbit_alloc(alloc, sizeof(int));
-	*obj = 100;
-
-	m = orbit_create("test_module", checker_plus_one_pool, NULL);
-	assert(m != NULL);
 
 	for (int i = 200; i <= 1000; i += 100) {
 		*obj = i;
@@ -149,16 +150,18 @@ void test_plus_one_async(bool recv_thread) {
 	struct orbit_module *m;
 	int *obj, ret;
 
-	pool = orbit_pool_create(4096);
+	obj = &ret;
+	*obj = 100;
+
+	m = orbit_create("test_module", checker_plus_one_async, NULL);
+	assert(m != NULL);
+
+	pool = orbit_pool_create(m, 4096);
 	assert(pool != NULL);
 	alloc = orbit_allocator_from_pool(pool, false);
 	assert(alloc != NULL);
 
 	obj = (int*)orbit_alloc(alloc, sizeof(int));
-	*obj = 100;
-
-	m = orbit_create("test_module", checker_plus_one_async, NULL);
-	assert(m != NULL);
 
 	*obj = 200;
 
@@ -187,16 +190,15 @@ void test_plus_one_async_commit() {
 	struct orbit_module *m;
 	int *obj, ret;
 
-	pool = orbit_pool_create(4096);
+	m = orbit_create("test_module", checker_plus_one_commit, NULL);
+	assert(m != NULL);
+
+	pool = orbit_pool_create(m, 4096);
 	assert(pool != NULL);
 	alloc = orbit_allocator_from_pool(pool, false);
 	assert(alloc != NULL);
 
 	obj = (int*)orbit_alloc(alloc, sizeof(int));
-	*obj = 100;
-
-	m = orbit_create("test_module", checker_plus_one_commit, NULL);
-	assert(m != NULL);
 
 	for (int i = 200; i <= 1000; i += 100) {
 		*obj = i;

@@ -46,9 +46,10 @@ void test_async_update()
 	uint64_t received = 0, expected = 0;
 	struct orbit_update *update;
 
-	pool = orbit_pool_create(4096 * 16);
-	alloc = orbit_allocator_from_pool(pool, false);
 	m = orbit_create("async_update", task_entry1, NULL);
+	pool = orbit_pool_create(m, 4096 * 16);
+	printf("created pool addr at %p\n", pool->rawptr);
+	alloc = orbit_allocator_from_pool(pool, false);
 	args = (struct task1_args *) orbit_alloc(
 		alloc, sizeof(struct task1_args));
 	update = (struct orbit_update*) malloc(sizeof(struct orbit_update) + 32);
