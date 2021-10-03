@@ -342,6 +342,8 @@ int orbit_scratch_push_update(struct orbit_scratch *s, void *ptr, size_t length)
 /* Push orbit_any to scratch */
 int orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length);
 
+#if defined(__cplusplus) && __cplusplus >= 201103L
+
 // TODO: rewrite two versions with better C macro and pure C++11 arg forward.
 // We can also provide compiler support for structuring lambda s.t. it can
 // written ergonomically and be sent safely.
@@ -379,6 +381,8 @@ int orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length);
 		}; \
 		orbit_scratch_push_operation(s, f, 3, argv); \
 	} while (0)
+
+#endif /* C++11 */
 
 /*
  * Create a pending "any" record in the scratch and return an allocator.
@@ -452,10 +456,16 @@ struct orbit_repr *orbit_scratch_next(struct orbit_scratch *s);
 #ifdef __cplusplus
 }
 
+#if __cplusplus >= 201103L
+#define NOEXCEPT noexcept
+#else
+#define NOEXCEPT throw()
+#endif
+
 namespace orbit {
 
 void *__orbit_allocate_wrapper(orbit_allocator *alloc, std::size_t n, std::size_t type_size);
-void __orbit_deallocate_wrapper(orbit_allocator *alloc, void *ptr, std::size_t n) noexcept;
+void __orbit_deallocate_wrapper(orbit_allocator *alloc, void *ptr, std::size_t n) NOEXCEPT;
 
 extern orbit_allocator *__global_allocator;
 void set_global_allocator(orbit_allocator *alloc);
@@ -471,7 +481,7 @@ public:
 		}
 		return std::allocator<T>().allocate(n);
 	}
-	void deallocate(T *p, std::size_t n) noexcept {
+	void deallocate(T *p, std::size_t n) NOEXCEPT {
 		if (__global_allocator)
 			return __orbit_deallocate_wrapper(__global_allocator, p, n);
 		std::allocator<T>().deallocate(p, n);
@@ -484,7 +494,7 @@ public:
  * subclass use orbit global allocator by default. */
 struct global_new_operator {
 	static void* operator new(std::size_t size);
-	static void operator delete(void *ptr) noexcept;
+	static void operator delete(void *ptr) NOEXCEPT;
 };
 
 // Note: this is currently only a wrapper on the orbit_alloc.
@@ -499,7 +509,7 @@ struct allocator {
 			return static_cast<T*>(__orbit_allocate_wrapper(alloc, n, sizeof(T)));
 		return std::allocator<T>().allocate(n);
 	}
-	void deallocate(T *p, std::size_t n) noexcept {
+	void deallocate(T *p, std::size_t n) NOEXCEPT {
 		if (alloc)
 			return __orbit_deallocate_wrapper(alloc, p, n);
 		std::allocator<T>().deallocate(p, n);
@@ -507,6 +517,8 @@ struct allocator {
 private:
 	orbit_allocator *alloc;
 };
+
+#undef NOEXCEPT
 
 }  // namespace orbit
 
