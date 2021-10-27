@@ -14,7 +14,14 @@ extern "C" {
 
 #include <pthread.h>
 
-#define ORBIT_NORETVAL		2
+#define ORBIT_NORETVAL		(1<<1)
+#define ORBIT_CANCELLABLE	(1<<2)
+/* Skippable (new task) and cancel (previous tasks) must be mutual exclusive */
+#define ORBIT_SKIP_SAME_ARG	(1<<3)
+#define ORBIT_SKIP_ANY		(1<<4)
+#define ORBIT_CANCEL_SAME_ARG	(1<<5)
+#define ORBIT_CANCEL_ANY	(1<<6)
+/* #define ORBIT_CANCEL_ALL	(1<<7) */
 
 
 /*
@@ -211,6 +218,16 @@ long orbit_call(struct orbit_module *module,
 int orbit_call_async(struct orbit_module *module, unsigned long flags,
 		size_t npool, struct orbit_pool** pools,
 		orbit_entry func, void *arg, size_t argsize, struct orbit_task *task);
+
+/** Cancel orbit task by taskid */
+int orbit_cancel_by_task(struct orbit_task *task);
+
+/**
+ * Cancel orbit task by argument
+ *
+ * Kernel will byte-wise compare the args with the args in the queue.
+ */
+int orbit_cancel_by_arg(struct orbit_module *module, void *arg, size_t argsize);
 
 // Functions to send updates in the checker and receive in the main program.
 unsigned long orbit_send(const struct orbit_update *update);

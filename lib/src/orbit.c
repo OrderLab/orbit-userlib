@@ -25,6 +25,7 @@
 #define SYS_ORBIT_STATE		446
 #define SYS_ORBIT_MMAP		447
 #define SYS_ORBIT_MMAP_PAIR	448
+#define SYS_ORBIT_CANCEL	449
 
 enum orbit_state
 {
@@ -37,7 +38,7 @@ enum orbit_state
 };
 
 /* Orbit flags */
-#define ORBIT_ASYNC	1
+#define ORBIT_ASYNC	(1<<0)
 
 #define ARG_SIZE_MAX 1024
 
@@ -203,6 +204,40 @@ int orbit_call_async(struct orbit_module *module, unsigned long flags,
 		task->taskid = ret;
 	}
 	return 0;
+}
+
+enum orbit_cancel_kind { ORBIT_CANCEL_ARGS, ORBIT_CANCEL_TASKID,
+			 ORBIT_CANCEL_KIND_ANY, };
+
+struct orbit_cancel_args {
+	obid_t gobid;
+	enum orbit_cancel_kind kind;
+	union {
+		struct {
+			void *arg;
+			size_t argsize;
+		};
+		unsigned long taskid;
+	};
+};
+
+int orbit_cancel_by_task(struct orbit_task *task) {
+	struct orbit_cancel_args args = {
+		.gobid = task->orbit->gobid,
+		.kind = ORBIT_CANCEL_TASKID,
+		.taskid = task->taskid,
+	};
+	return syscall(SYS_ORBIT_CANCEL, &args);
+}
+
+int orbit_cancel_by_arg(struct orbit_module *module, void *arg, size_t argsize) {
+	struct orbit_cancel_args args = {
+		.gobid = module->gobid,
+		.kind = ORBIT_CANCEL_ARGS,
+		.arg = arg,
+		.argsize = argsize,
+	};
+	return syscall(SYS_ORBIT_CANCEL, &args);
 }
 
 unsigned long orbit_send(const struct orbit_update *update) {
