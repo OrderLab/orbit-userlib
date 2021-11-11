@@ -10,6 +10,7 @@ set(UNIT_TEST_SOURCES
   async-update-basic.c
   signal-handler.c
   crash-handling.c
+  bitmap-allocator.c
 )
 
 # they not been rewritten into unit tests

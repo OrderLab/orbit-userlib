@@ -124,7 +124,8 @@ enum orbit_pool_mode { ORBIT_COW, ORBIT_MOVE, ORBIT_COPY, };
 struct orbit_pool {
 	void *rawptr;
 	size_t length;	// the pool should be page-aligned
-	size_t used;
+	void* data_start;
+	size_t data_length;
 	enum orbit_pool_mode mode;
 };
 
@@ -257,40 +258,26 @@ struct orbit_pool *orbit_pool_create_at(struct orbit_module *ob,
 
 /* ====== Allocator API ===== */
 
-/*
- * A linear allocator.
- *
- * This allocator can be created from orbit_pool or orbit_scratch.
- *
- * This allocator is typically used to dynamically determine the size of useful
- * data in the underlying memory region.  Thus it is now coupled with the
- * back end on an "allocated size" in the back end.  It contains a pointer to
- * an external location that stores the allocated size.  For orbit_pool it is
- * `used`, and for orbit_any it is the `length` field.
- * After each alloc or free, the allocator will updates the external size field.
- *
- * The allocator has a "use_meta" option.  When this is set, the allocator will
- * use a small header before the allocated data.  This header is useful for
- * `free` and `realloc`.  For scenarios that does not need free or realloc,
- * unsetting this option can help save space used in the underlying memory
- * region.  This option shall not be changed after the creation.
- */
 struct orbit_allocator {
-	void *start;		/* Underlying memory region */
-	size_t length;
-	size_t *allocated;	/* External pointer to allocated size */
-	pthread_spinlock_t lock;	/* alloc needs to be thread-safe */
-	bool use_meta;
+	struct orbit_allocator_vtable *vtable;
 };
 
-/* Create an allocator */
-struct orbit_allocator *orbit_allocator_create(void *start, size_t length,
-		size_t *allocated, bool use_meta);
+struct orbit_allocator_vtable {
+	void*(*alloc)(struct orbit_allocator *alloc, size_t size);
+	void(*free)(struct orbit_allocator *alloc, void *ptr);
+	void*(*realloc)(struct orbit_allocator *alloc, void *oldptr, size_t newsize);
+	// void(*data_range)(struct orbit_allocator *alloc, void **start, size_t *length);
+	void(*destroy)(struct orbit_allocator *alloc);
+};
+
 /* Destroy an allocator */
 void orbit_allocator_destroy(struct orbit_allocator *alloc);
 
 /* Create an allocator using underlying pool */
 struct orbit_allocator *orbit_allocator_from_pool(struct orbit_pool *pool, bool use_meta);
+
+/* Get useful data range. This is used by orbit call or send. */
+// void orbit_allocator_data_range(struct orbit_allocator *alloc, void **start, size_t *length);
 
 void *__orbit_alloc(struct orbit_allocator *alloc, size_t size,
 			const char *file, int line);
