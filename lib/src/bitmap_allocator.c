@@ -8,6 +8,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#if 0
+#define obprintf(fmt, ...) do { fprintf(stderr, fmt, ##__VA_ARGS__); } while (0)
+#else
+#define obprintf(...) do { } while (0)
+#endif
+
 /* FIXME: We now assumes page size of 4096 and processor to be 64-bits.
  * Ideally we should dynamically plan bitmap size using page size from
  * `getpagesize()`, and use `unsigned long`. */
@@ -38,20 +44,22 @@ _define_round_down(4096)
 #undef _define_round_up
 #undef _define_round_down
 
-#define ctz __builtin_ctzll
-#define clz __builtin_clzll
-
 typedef unsigned long long bitmap_t;
 typedef unsigned char byte;
 
+#define ctz(_x) ({ bitmap_t x = (_x); x == 0 ? 64 : __builtin_ctzll(x); })
+#define clz(_x) ({ bitmap_t x = (_x); x == 0 ? 64 : __builtin_clzll(x); })
+
+/* The following three functions: if input bits == 0 or shift == 64,
+ * output is undefined */
 static inline bitmap_t bitmap_mask(int bits, int shift) {
-	return ((1 << bits) - 1) << shift;
+        return (~0ULL >> (64 - bits)) << shift;
 }
 static inline bitmap_t lsb_mask(int bits) {
-	return ~(~0ULL << bits);
+        return ~0ULL >> (64 - bits);
 }
 static inline bitmap_t msb_mask(int bits) {
-	return ~(~0ULL >> bits);
+        return ~0ULL << (64 - bits);
 }
 
 static inline size_t min(size_t x, size_t y) {
@@ -138,6 +146,7 @@ void orbit_bitmap_allocator_destroy(struct orbit_allocator *base)
 {
 	struct orbit_bitmap_allocator *alloc = (struct orbit_bitmap_allocator*)base;
 	size_t i;
+	pthread_spin_lock(&alloc->lock);
 	pthread_spin_destroy(&alloc->lock);
 	for (i = 0; i < alloc->npages; ++i)
 		pthread_spin_destroy(&alloc->page_meta[i].lock);
@@ -147,20 +156,26 @@ void orbit_bitmap_allocator_destroy(struct orbit_allocator *base)
  * going out of this range won't have bad effects. */
 static inline void bitmap_clear_bits(struct page_meta *meta, size_t offset, size_t count)
 {
-	if (offset < 64)
+	if (offset < 64) {
 		meta->bitmap[0] &= ~bitmap_mask(min(count, 64 - offset), offset);
-	if (offset + count > 64)
-		meta->bitmap[1] &= ~bitmap_mask(offset + count - 64, offset < 64 ? 0 : offset - 64);
+		if (offset + count > 64)
+			meta->bitmap[1] &= ~bitmap_mask(offset + count - 64, 0);
+	} else {
+		meta->bitmap[1] &= ~bitmap_mask(count, offset - 64);
+	}
 }
 
 /* Helper function to set bits. Bits range should be in [0,128). Though
  * going out of this range won't have bad effects. */
 static inline void bitmap_set_bits(struct page_meta *meta, size_t offset, size_t count)
 {
-	if (offset < 64)
+	if (offset < 64) {
 		meta->bitmap[0] |= bitmap_mask(min(count, 64 - offset), offset);
-	if (offset + count > 64)
-		meta->bitmap[1] |= bitmap_mask(offset + count - 64, offset < 64 ? 0 : offset - 64);
+		if (offset + count > 64)
+			meta->bitmap[1] |= bitmap_mask(offset + count - 64, 0);
+	} else {
+		meta->bitmap[1] |= bitmap_mask(count, offset - 64);
+	}
 }
 
 /* Helper function to clear whole bitmap */
@@ -183,6 +198,7 @@ static inline size_t bitmap_zeros_beginning(struct page_meta *meta) {
 /* Helper function to count consecutive zeros at the end
  * of a page across both bitmaps. */
 static inline size_t bitmap_zeros_end(struct page_meta *meta) {
+	obprintf("clz bitmap=%lld, clz=%d\n", meta->bitmap[1], clz(meta->bitmap[1]));
 	int last = clz(meta->bitmap[1]);
 	int first = last == 64 ? clz(meta->bitmap[0]) : 0;
 	return first + last;
@@ -255,16 +271,21 @@ static inline int find_zeros_and_set(bitmap_t *bitmapp, int bits)
  * On fail, return -1. */
 static inline int find_edge_zeros_and_set(bitmap_t *bitmap0, bitmap_t *bitmap1, int bits)
 {
+	obprintf("bitmap0=0x%016llx bitmap1=0x%016llx\n", *bitmap0, *bitmap1);
 	/* Zeros at the end of bitmap0 (MSB as last bits) */
 	int zeros0 = clz(*bitmap0);
 	/* Zeros at the beginning of bitmap1 (LSB as first bits) */
 	int zeros1 = ctz(*bitmap1);
+	obprintf("zeros0=%d, zeros1=%d, bits=%d\n", zeros0, zeros1, bits);
 
 	if (zeros0 + zeros1 < bits)
 		return -1;
+	zeros1 = bits - zeros0;
 
+	obprintf("mask0=0x%016llx mask1=0x%016llx\n", msb_mask(zeros0), lsb_mask(zeros1));
 	*bitmap0 |= msb_mask(zeros0);
 	*bitmap1 |= lsb_mask(zeros1);
+	obprintf("bitmap0=0x%016llx bitmap1=0x%016llx\n", *bitmap0, *bitmap1);
 	return 64 - zeros0;
 }
 
@@ -283,28 +304,40 @@ static inline int bitmap_find_zeros_and_set(struct page_meta *meta, int bits)
 {
 } */
 
+void *orbit_black_hole(void *ptr) { return ptr; }
+
 void *orbit_bitmap_alloc(struct orbit_allocator *base, size_t size)
 {
 	struct orbit_bitmap_allocator *alloc = (struct orbit_bitmap_allocator*)base;
-	size_t blocks, pagei;
+	size_t blocks;
 	struct page_meta *meta;
-	struct alloc_header *header;
-	int k;
+	struct alloc_header *header = NULL;
+	size_t start_page, end_page, start_block;
+
+	if (!alloc || size == 0) return NULL;
 
 	size = round_up_block(size + header_size);
-	if (size >= PAGE_SIZE) {
+	blocks = size / BLOCK_SIZE;
+
+	pthread_spin_lock(&alloc->lock);
+	obprintf("Allocating %lu bytes %lu blocks, accum %lu\n", size, blocks, alloc->allocated);
+
+	if (size > PAGE_SIZE) {
 		/* Represent # of blocks needed as mP + nB where m is # of Pages and n is # of Blocks */
 		size_t m = size / PAGE_SIZE;
 		size_t n = (size % PAGE_SIZE) / BLOCK_SIZE;
 		size_t found_enough_pages;
+		obprintf("m %lu, n %lu\n", m, n);
 
-		for (pagei = 0; pagei + m < alloc->npages;) {
-			size_t start_page = pagei;
-			size_t end_page = pagei + m;
+		for (size_t pagei = 0; pagei + m < alloc->npages;) {
+			start_page = pagei;
+			end_page = pagei + m;
 
 			/* Look for gaps in page before and page after */
 			size_t before_blocks = bitmap_zeros_end(alloc->page_meta + start_page);
+			obprintf("start page %lu, before_blocks %lu\n", start_page, before_blocks);
 			size_t after_blocks = bitmap_zeros_beginning(alloc->page_meta + end_page);
+			obprintf("end page %lu, after_blocks %lu\n", end_page, after_blocks);
 			if (before_blocks + after_blocks < BLOCKS_PER_PAGE + n) {
 				pagei = end_page;
 				continue;
@@ -314,6 +347,8 @@ void *orbit_bitmap_alloc(struct orbit_allocator *base, size_t size)
 			found_enough_pages = 1;
 			for (size_t midpage = start_page + 1; midpage < end_page; ++midpage) {
 				if (alloc->page_meta[midpage].used) {
+					obprintf("page %lu, used %u\n", midpage,
+						alloc->page_meta[midpage].used);
 					pagei = midpage;
 					found_enough_pages = 0;
 					break;
@@ -323,7 +358,7 @@ void *orbit_bitmap_alloc(struct orbit_allocator *base, size_t size)
 				continue;
 
 			/* Set bits */
-			bitmap_find_zeros_and_set(alloc->page_meta + end_page, after_blocks);
+			bitmap_set_bits(alloc->page_meta + end_page, 0, after_blocks);
 			alloc->page_meta[end_page].used += after_blocks;
 
 			for (size_t midpage = end_page - 1; midpage > start_page; --midpage) {
@@ -332,44 +367,53 @@ void *orbit_bitmap_alloc(struct orbit_allocator *base, size_t size)
 				meta->used = BLOCKS_PER_PAGE;
 			}
 
-			size_t first_block = after_blocks - n;
-			bitmap_set_bits(alloc->page_meta + start_page, first_block,
-				BLOCKS_PER_PAGE - first_block);
-			alloc->page_meta[start_page].used += BLOCKS_PER_PAGE - first_block;
+			start_block = after_blocks - n;
+			bitmap_set_bits(alloc->page_meta + start_page, start_block,
+				BLOCKS_PER_PAGE - start_block);
+			alloc->page_meta[start_page].used += BLOCKS_PER_PAGE - start_block;
 
-			header = (struct alloc_header*)(alloc->first_page + start_page * PAGE_SIZE
-				+ first_block * BLOCK_SIZE);
-			header->blocks = m * BLOCKS_PER_PAGE + n;
-			return header + 1;
+			goto success;
 		}
 	} else {
-
-		blocks = size / BLOCK_SIZE;
-
-		for (pagei = 0; pagei < alloc->npages; ++pagei) {
+		for (size_t pagei = 0; pagei < alloc->npages; ++pagei) {
 			meta = alloc->page_meta + pagei;
 
 			if (BLOCKS_PER_PAGE - meta->used < blocks)
 				continue;
 
-			k = bitmap_find_zeros_and_set(meta, blocks);
+			int k = bitmap_find_zeros_and_set(meta, blocks);
 			if (k == -1)
 				continue;
 
 			meta->used += blocks;
-			if (pagei + 1 > alloc->allocated) {
-				alloc->allocated = pagei + 1;
-				if (alloc->data_length)
-					*alloc->data_length = (pagei + 1) * PAGE_SIZE;
-			}
-			header = (struct alloc_header*)(alloc->first_page
-					+ pagei * PAGE_SIZE + k * BLOCK_SIZE);
-			header->blocks = blocks;
-			return header + 1;
+
+			start_page = pagei;
+			end_page = pagei;
+			start_block = k;
+			goto success;
 		}
 	}
 
-	return NULL;
+	fprintf(stderr, "Allocation failed!\n");
+	abort();
+	goto exit;
+
+success:
+	if (end_page + 1 > alloc->allocated) {
+		alloc->allocated = end_page + 1;
+		if (alloc->data_length)
+			*alloc->data_length = (end_page + 1) * PAGE_SIZE;
+	}
+	header = (struct alloc_header*)(alloc->first_page
+			+ start_page * PAGE_SIZE + start_block * BLOCK_SIZE);
+	header->blocks = blocks;
+	obprintf("Allocated at page=%lu block=%lu ptr=%p request=%lu B\n",
+		start_page, start_block, header + 1, blocks);
+
+exit:
+	orbit_black_hole(header);
+	pthread_spin_unlock(&alloc->lock);
+	return header ? header + 1 : NULL;
 }
 
 /* Helper function to convert ptr in the pool to pagei and blocki.
@@ -395,7 +439,7 @@ void orbit_bitmap_free(struct orbit_allocator *base, void *ptr)
 	size_t blocks, blocks_this_page;
 	struct page_meta *meta;
 
-	if (!ptr) return;
+	if (!alloc || !ptr) return;
 
 	header = (struct alloc_header*)ptr - 1;
 	if (translate(alloc, ptr, &pagei, &blocki))
@@ -409,6 +453,8 @@ void orbit_bitmap_free(struct orbit_allocator *base, void *ptr)
 		return;
 	}
 
+	pthread_spin_lock(&alloc->lock);
+
 	for (meta = alloc->page_meta + pagei; blocks;
 		++meta, blocks -= blocks_this_page,
 		blocks_this_page = min(BLOCKS_PER_PAGE, blocks))
@@ -421,13 +467,15 @@ void orbit_bitmap_free(struct orbit_allocator *base, void *ptr)
 			blocki = 0;
 		}
 	}
-	for (meta = alloc->page_meta + alloc->allocated; meta != alloc->page_meta; --meta) {
-		if ((meta - 1)->used != 0)
+	for (meta = alloc->page_meta + alloc->allocated - 1; meta >= alloc->page_meta; --meta) {
+		if (meta->used != 0)
 			break;
 		--alloc->allocated;
 	}
 	if (alloc->data_length)
 		*alloc->data_length = alloc->allocated * PAGE_SIZE;
+
+	pthread_spin_unlock(&alloc->lock);
 }
 
 void *orbit_bitmap_realloc(struct orbit_allocator *base, void *oldptr, size_t newsize)
@@ -461,6 +509,7 @@ void *orbit_bitmap_realloc(struct orbit_allocator *base, void *oldptr, size_t ne
 
 	mem = orbit_bitmap_alloc(base, newsize);
 	memcpy(mem, oldptr, header->blocks * BLOCK_SIZE - header_size);
+	obprintf("Memcpying from %p to %p size=%lu\n", oldptr, mem, header->blocks * BLOCK_SIZE - header_size);
 	orbit_bitmap_free(base, oldptr);
 	return mem;
 }
