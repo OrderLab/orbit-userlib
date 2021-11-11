@@ -469,6 +469,9 @@ enum orbit_type orbit_skip_one(struct orbit_scratch *s, bool yield);
 
 struct orbit_repr *orbit_scratch_first(struct orbit_scratch *s);
 struct orbit_repr *orbit_scratch_next(struct orbit_scratch *s);
+static inline bool orbit_scratch_empty(struct orbit_scratch *s) {
+       return s->count == 0;
+}
 
 #ifdef __cplusplus
 }
