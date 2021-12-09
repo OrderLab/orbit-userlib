@@ -356,8 +356,10 @@ int orbit_scratch_push_operation(struct orbit_scratch *s,
 		orbit_operation_func func, size_t argc, unsigned long argv[]);
 /* Push orbit_update to scratch */
 int orbit_scratch_push_update(struct orbit_scratch *s, void *ptr, size_t length);
-/* Push orbit_any to scratch */
-int orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length);
+/* Push orbit_any to scratch.  Returns a space of size `length`.
+ * If ptr is non-NULL, it will copy the data into that area.
+ * If ptr is NULL, it returns `length` space from scratch to be filled by the caller. */
+void *orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length);
 
 #if defined(__cplusplus) && __cplusplus >= 201103L
 

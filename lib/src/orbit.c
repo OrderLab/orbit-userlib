@@ -505,7 +505,7 @@ int orbit_scratch_push_update(struct orbit_scratch *s, void *ptr, size_t length)
 	return ++s->count;
 }
 
-int orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length)
+void *orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length)
 {
 	struct orbit_repr *record;
 	size_t rec_size = sizeof(struct orbit_repr) + length;
@@ -513,18 +513,20 @@ int orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length)
 	orbit_scratch_close_any(s);
 
 	if (rec_size > s->size_limit - s->cursor)
-		return -1;	/* No enough space */
+		return NULL;	/* No enough space */
 
 	record = (struct orbit_repr*)((char*)s->ptr + s->cursor);
 
 	record->type = ORBIT_ANY;
 	record->any.length = length;
-	memcpy(record->any.data, ptr, length);
+	// Act as preallocating fixed area
+	if (ptr) memcpy(record->any.data, ptr, length);
 
 	s->cursor += rec_size;
 	s->cursor = round_up_4(s->cursor);
+	++s->count;
 
-	return ++s->count;
+	return record->any.data;
 }
 
 int orbit_scratch_push_operation(struct orbit_scratch *s,
