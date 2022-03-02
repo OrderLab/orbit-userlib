@@ -11,6 +11,7 @@ set(UNIT_TEST_SOURCES
   signal-handler.c
   crash-handling.c
   incremental-snapshot.c
+  bitmap-allocator.c
 )
 
 # they not been rewritten into unit tests
