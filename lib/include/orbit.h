@@ -126,6 +126,8 @@ struct orbit_pool {
 	size_t length;	// the pool should be page-aligned
 	size_t used;
 	enum orbit_pool_mode mode;
+
+	bool from_malloc;
 };
 
 // typedef int(*orbit_callback)(struct orbit_update*);
@@ -252,6 +254,11 @@ struct orbit_pool *orbit_pool_create(struct orbit_module *ob,
 struct orbit_pool *orbit_pool_create_at(struct orbit_module *ob,
 					size_t init_pool_size, void *addr);
 
+bool orbit_pool_create_in(struct orbit_pool *pool, struct orbit_module *ob,
+			  size_t init_pool_size);
+bool orbit_pool_create_at_in(struct orbit_pool *pool, struct orbit_module *ob,
+			     size_t init_pool_size, void *addr);
+
 // void obPoolDestroy(pool);
 
 
@@ -281,16 +288,21 @@ struct orbit_allocator {
 	size_t *allocated;	/* External pointer to allocated size */
 	pthread_spinlock_t lock;	/* alloc needs to be thread-safe */
 	bool use_meta;
+
+	bool from_malloc;
 };
 
 /* Create an allocator */
 struct orbit_allocator *orbit_allocator_create(void *start, size_t length,
+		size_t *allocated, bool use_meta);
+bool orbit_allocator_create_in(struct orbit_allocator *alloc, void *start, size_t length,
 		size_t *allocated, bool use_meta);
 /* Destroy an allocator */
 void orbit_allocator_destroy(struct orbit_allocator *alloc);
 
 /* Create an allocator using underlying pool */
 struct orbit_allocator *orbit_allocator_from_pool(struct orbit_pool *pool, bool use_meta);
+bool orbit_allocator_from_pool_in(struct orbit_allocator *alloc, struct orbit_pool *pool, bool use_meta);
 
 void *__orbit_alloc(struct orbit_allocator *alloc, size_t size,
 			const char *file, int line);
@@ -414,6 +426,7 @@ void *orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length);
  * be used any more.
  * */
 struct orbit_allocator *orbit_scratch_open_any(struct orbit_scratch *s, bool use_meta);
+bool orbit_scratch_open_any_in(struct orbit_allocator *alloc, struct orbit_scratch *s, bool use_meta);
 /*
  * Close the pending "any" record and destroy the allocator for it.
  *

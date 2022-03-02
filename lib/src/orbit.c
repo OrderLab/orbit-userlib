@@ -55,7 +55,7 @@ _define_round_up(4096)
 
 static struct {
 	/* Underlying global pool used to create scratch. */
-	struct orbit_pool *scratch_pool;
+	struct orbit_pool *scratch_pool, scratch_pool_data;
 } info;
 
 static void scratch_renew(size_t size_hint)
@@ -72,7 +72,7 @@ static void info_init(void)
 	info.scratch_pool = orbit_pool_create(NULL, 1024 * 1024);
 }
 
-long orbit_taskid;
+static long orbit_taskid;
 static bool orbit_context = false;
 
 struct orbit_module *orbit_create(const char *module_name,
@@ -252,7 +252,7 @@ unsigned long orbit_commit(void) {
 	return syscall(SYS_ORBIT_COMMIT);
 }
 
-inline struct orbit_pool *orbit_pool_create(struct orbit_module *ob,
+struct orbit_pool *orbit_pool_create(struct orbit_module *ob,
 				     size_t init_pool_size)
 {
 	const int DBG = 0;
@@ -264,12 +264,40 @@ struct orbit_pool *orbit_pool_create_at(struct orbit_module *ob,
 					size_t init_pool_size, void *addr)
 {
 	struct orbit_pool *pool;
-	void *area;
 
 	init_pool_size = round_up_page(init_pool_size);
 
 	pool = (struct orbit_pool*)malloc(sizeof(struct orbit_pool));
 	if (pool == NULL) goto pool_malloc_fail;
+
+	if (!orbit_pool_create_at_in(pool, ob, init_pool_size, addr))
+		goto mmap_fail;
+
+	/* Overwrite the from_malloc flag */
+	pool->from_malloc = true;
+
+	return pool;
+
+mmap_fail:
+	free(pool);
+pool_malloc_fail:
+	return NULL;
+}
+
+bool orbit_pool_create_in(struct orbit_pool *pool, struct orbit_module *ob,
+		size_t init_pool_size)
+{
+	const int DBG = 0;
+	void *MMAP_HINT = DBG ? (void*)0x8000000 : NULL;
+	return orbit_pool_create_at_in(pool, ob, init_pool_size, MMAP_HINT);
+}
+
+bool orbit_pool_create_at_in(struct orbit_pool *pool, struct orbit_module *ob,
+		size_t init_pool_size, void *addr)
+{
+	void *area;
+
+	if (pool == NULL) return false;
 
 	if (ob != NULL) {
 		long ret = syscall(SYS_ORBIT_MMAP_PAIR, ob->gobid, addr,
@@ -280,20 +308,17 @@ struct orbit_pool *orbit_pool_create_at(struct orbit_module *ob,
 		area = mmap(addr, init_pool_size, PROT_READ | PROT_WRITE,
 			    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	}
-	if (area == NULL) goto mmap_fail;
+	if (area == NULL) return false;
 
 	pool->rawptr = area;
 	pool->length = init_pool_size;
 	pool->used = 0;
 	pool->mode = ORBIT_COW;
+	pool->from_malloc = false;
 
-	return pool;
-
-mmap_fail:
-	free(pool);
-pool_malloc_fail:
-	return NULL;
+	return true;
 }
+
 // void orbit_pool_destroy(pool);
 
 struct alloc_meta {
@@ -303,7 +328,6 @@ struct alloc_meta {
 struct orbit_allocator *orbit_allocator_create(void *start, size_t length,
 		size_t *allocated, bool use_meta)
 {
-	int ret;
 	struct orbit_allocator* alloc;
 
 	if (!allocated)
@@ -312,13 +336,11 @@ struct orbit_allocator *orbit_allocator_create(void *start, size_t length,
 	alloc = (struct orbit_allocator*)malloc(sizeof(struct orbit_allocator));
 	if (alloc == NULL) return NULL;
 
-	ret = pthread_spin_init(&alloc->lock, PTHREAD_PROCESS_PRIVATE);
-	if (ret != 0) goto lock_init_fail;
+	if (!orbit_allocator_create_in(alloc, start, length, allocated, use_meta))
+		goto lock_init_fail;
 
-	alloc->start = start;
-	alloc->length = length;
-	alloc->allocated = allocated;
-	alloc->use_meta = use_meta;
+	/* Overwrite the from_malloc flag */
+	alloc->from_malloc = true;
 
 	return alloc;
 
@@ -327,16 +349,37 @@ lock_init_fail:
 	return NULL;
 }
 
+bool orbit_allocator_create_in(struct orbit_allocator *alloc,
+		void *start, size_t length, size_t *allocated, bool use_meta)
+{
+	int ret = pthread_spin_init(&alloc->lock, PTHREAD_PROCESS_PRIVATE);
+	if (ret != 0) return false;
+
+	alloc->start = start;
+	alloc->length = length;
+	alloc->allocated = allocated;
+	alloc->use_meta = use_meta;
+	alloc->from_malloc = false;
+
+	return true;
+}
+
 void orbit_allocator_destroy(struct orbit_allocator *alloc)
 {
 	pthread_spin_destroy(&alloc->lock);
 	memset(alloc, 0, sizeof(*alloc));
-	free(alloc);
+	if (alloc->from_malloc)
+		free(alloc);
 }
 
 struct orbit_allocator *orbit_allocator_from_pool(struct orbit_pool *pool, bool use_meta)
 {
 	return orbit_allocator_create(pool->rawptr, pool->length, &pool->used, use_meta);
+}
+
+bool orbit_allocator_from_pool_in(struct orbit_allocator *alloc, struct orbit_pool *pool, bool use_meta)
+{
+	return orbit_allocator_create_in(alloc, pool->rawptr, pool->length, &pool->used, use_meta);
 }
 
 /* TODO: currently we are ony using a linear allocating mechanism.
@@ -421,7 +464,8 @@ int orbit_scratch_set_pool(struct orbit_pool *pool)
 {
 	if (!pool)
 		return -1;
-	info.scratch_pool = pool;
+	info.scratch_pool_data = *pool;
+	info.scratch_pool = &info.scratch_pool_data;
 	return 0;
 }
 
@@ -462,6 +506,35 @@ struct orbit_allocator *orbit_scratch_open_any(struct orbit_scratch *s, bool use
 			use_meta);
 
 	return s->any_alloc;
+}
+
+// TODO: fix those duplicate code
+bool orbit_scratch_open_any_in(struct orbit_allocator *alloc, struct orbit_scratch *s, bool use_meta)
+{
+	struct orbit_repr *record;
+	size_t rec_size = sizeof(struct orbit_repr);
+	bool ret;
+
+	orbit_scratch_close_any(s);
+
+	if (rec_size > s->size_limit - s->cursor)
+		return NULL;
+
+	record = (struct orbit_repr*)((char*)s->ptr + s->cursor);
+	record->type = ORBIT_ANY;
+	record->any.length = 0;  /* Unknown size, filled by `conclude' */
+
+	ret = orbit_allocator_create_in(alloc,
+			record->any.data,
+			s->size_limit - (record->any.data - (char*)s->ptr),
+			&record->any.length,
+			use_meta);
+
+	if (!ret) return false;
+
+	s->any_alloc = alloc;
+
+	return true;
 }
 
 int orbit_scratch_close_any(struct orbit_scratch *s)
