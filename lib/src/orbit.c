@@ -93,7 +93,7 @@ struct orbit_module *orbit_create(const char *module_name,
 	gobid = syscall(SYS_ORBIT_CREATE, module_name, argbuf, &mpid, &lobid, &func_once);
 	if (gobid == -1) {
 		free(ob);
-		printf("orbit_create failed with errno: %s\n", strerror(errno));
+		fprintf(stderr, "orbit_create failed with errno: %s\n", strerror(errno));
 		return NULL;
 	} else if (gobid == 0) {
 		/* We are now in child, we should run the function  */
@@ -119,8 +119,8 @@ struct orbit_module *orbit_create(const char *module_name,
 		exit(0);
 	}
 
-	printf("Created orbit <mpid %d, lobid %d, gobid %d>\n", mpid, lobid,
-	       gobid);
+	/* printf("Created orbit <mpid %d, lobid %d, gobid %d>\n", mpid, lobid,
+	       gobid); */
 
 	/* Now we are in parent. */
 	ob->mpid = mpid;
