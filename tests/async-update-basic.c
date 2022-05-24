@@ -6,6 +6,11 @@
 
 #include "acutest.h"
 
+struct task1_args;
+struct orbit_args {
+	struct task1_args *real_args;
+};
+
 struct task1_args {
 	int size;
 	int data[128];
@@ -14,8 +19,13 @@ struct task1_args {
 unsigned long task_entry1(void *store, void *args)
 {
 	(void)store;
-	struct task1_args *real_args = (struct task1_args *) args;
+	struct task1_args *real_args = ((struct orbit_args *) args)->real_args;
 	printf("Orbit received %d items from main program\n", real_args->size);
+	int tmp = real_args->size;
+	real_args->size = 123; // should not segfault here
+	printf("Orbit updated real_args->size\n");
+	real_args->size = tmp; // should not segfault here
+	printf("Orbit reverted real_args->size\n");
 	uint64_t result = 0;
 	for (int i = 0; i < real_args->size; ++i) {
 		result += real_args->data[i];
@@ -47,6 +57,7 @@ void test_async_update()
 	struct orbit_update *update;
 
 	m = orbit_create("async_update", task_entry1, NULL);
+	printf("created async_update orbit task %d\n", m->gobid);
 	pool = orbit_pool_create(m, 4096 * 16);
 	printf("created pool addr at %p\n", pool->rawptr);
 	alloc = orbit_allocator_from_pool(pool, false);
@@ -61,8 +72,10 @@ void test_async_update()
 		expected += args->data[i];
 	}
 
-	int ret = orbit_call_async(m, 0, 1, &pool, NULL, args,
-				   sizeof(struct task1_args), &task);
+	struct orbit_args oargs = { .real_args = args, };
+
+	int ret = orbit_call_async(m, 0, 1, &pool, NULL, &oargs,
+				   sizeof(struct orbit_args), &task);
 	TEST_ASSERT(ret == 0);
 	do_work();
 
