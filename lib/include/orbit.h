@@ -11,12 +11,13 @@ extern "C" {
 #include <stdbool.h>
 #include <string.h>
 #endif
+#include <sys/queue.h>
 
 #include <pthread.h>
 
 #define ORBIT_NORETVAL		(1<<1)
 #define ORBIT_CANCELLABLE	(1<<2)
-/* Skippable (new task) and cancel (previous tasks) must be mutual exclusive */
+/* Skippable (new future) and cancel (previous tasks) must be mutual exclusive */
 #define ORBIT_SKIP_SAME_ARG	(1<<3)
 #define ORBIT_SKIP_ANY		(1<<4)
 #define ORBIT_CANCEL_SAME_ARG	(1<<5)
@@ -71,7 +72,7 @@ extern "C" {
  * you can not use the MSB.  This can be fixed if we do not reuse the syscall
  * return value as orbit_entry return value.
  */
-typedef unsigned long(*orbit_entry)(void *store, void *argbuf);
+typedef struct orbit_result(*orbit_entry)(void *store, void *argbuf);
 
 typedef int pid_t;
 typedef int obid_t;
@@ -85,7 +86,7 @@ typedef int obid_t;
  * <lobid> is the orbit id local to the main program, and is not globally unique.
  * <gobid> is the globally unique id assigned to an orbit.
  */
-struct orbit_module {
+struct orbit {
 	pid_t mpid; // PID of the main program
 	obid_t lobid; // orbit id local to a main program
 	pid_t gobid; // global orbit id, which can uniquely identify the kernel object
@@ -95,7 +96,7 @@ struct orbit_module {
 };
 
 /*
- * Orbit pool mode
+ * Orbit area mode
  *
  * This is used by kernel update_page_range as a hint to determine the strategy
  * to use when copying pages between orbit and main program.
@@ -106,54 +107,55 @@ struct orbit_module {
  *   MOVE: move the PTEs; sender will immediately lose access to the sent data
  *   COPY: copy the data into kernel and then copy to the other side
  */
-enum orbit_pool_mode { ORBIT_COW, ORBIT_MOVE, ORBIT_COPY, };
+enum orbit_area_mode { ORBIT_COW, ORBIT_MOVE, ORBIT_COPY, };
 
 /*
- * Orbit pool
+ * Orbit area
  *
- * Orbit pool manages an underlying VMA.  An orbit pool have a snapshot mode
+ * Orbit area manages an underlying VMA.  An orbit area have a snapshot mode
  * that is used by the kernel when transferring data between orbit and main
  * program.  The default mode will be CoW.
  *
- * The pool structure also maintains the size of used space as an optimization
+ * The area structure also maintains the size of used space as an optimization
  * for snapshot.
- * To use dynamic memory management, create an allocator from the pool.
- * To use the pool as a raw memory region and snapshot the whole pool every
+ * To use dynamic memory management, create an allocator from the area.
+ * To use the area as a raw memory region and snapshot the whole area every
  * time, set `used` to `length`.
  */
-struct orbit_pool {
+struct orbit_area {
 	void *rawptr;
-	size_t length;	// the pool should be page-aligned
+	size_t length;	// the area should be page-aligned
 	void* data_start;
 	size_t data_length;
-	enum orbit_pool_mode mode;
+	enum orbit_area_mode mode;
+	struct orbit_allocator *alloc;
 };
 
 // typedef int(*orbit_callback)(struct orbit_update*);
 
-struct orbit_task {
-	struct orbit_module *orbit;
+struct orbit_future {
+	struct orbit *orbit;
 	unsigned long taskid;
 	// orbit_callback callback;
 };
 
-#define ORBIT_BUFFER_MAX 1024	/* Maximum buffer size of orbit_update data field */
+#define ORBIT_BUFFER_MAX 1024	/* Maximum buffer size of orbit_modify data field */
 
 /*
  * Information of where to update and what to update to.
  *
  * Data is a dynamically sized buffer that can contain anything.
  */
-struct orbit_update {
+struct orbit_modify {
 	void *ptr;
 	size_t length;
-	char data[];
+	void *data;
 };
 
 /*
  * We may later change this to accept (void*) instead of argc, argv.
  */
-typedef unsigned long(*orbit_operation_func)(size_t, unsigned long[]);
+typedef unsigned long(*orbit_operation_func)(void *arg);
 
 /*
  * Information of operation to execute, just like a closure.
@@ -163,37 +165,38 @@ typedef unsigned long(*orbit_operation_func)(size_t, unsigned long[]);
  */
 struct orbit_operation {
 	orbit_operation_func func;
-	size_t argc;
-	unsigned long argv[];	/* `void*` type argument */
+	void *arg;
 };
 
 struct orbit_any {
+	void *data;
 	unsigned long length;
-	char data[];
 };
 
 enum orbit_type { ORBIT_END, ORBIT_UNKNOWN, ORBIT_ANY,
-		  ORBIT_UPDATE, ORBIT_OPERATION, };
+		  ORBIT_MODIFY, ORBIT_OPERATION, };
+
+#define __ORBIT_REPR_SMALL_DATA 16
 
 struct orbit_repr {
 	enum orbit_type type;
 	/* Maybe consider type safety of this union? */
 	union {
-		struct orbit_update update;
+		struct orbit_modify modify;
 		struct orbit_operation operation;
 		struct orbit_any any;
 	};
+	char small_data[__ORBIT_REPR_SMALL_DATA];
 };
 
 /*
  * Spawn an orbit.
  *
  * Underlying syscall: orbit_create, 0 args, return obid.
- * entry_func is stored in the orbit task handle loop.
+ * entry_func is stored in the orbit future handle loop.
  */
-struct orbit_module *orbit_create(const char *module_name,
+struct orbit *orbit_create(const char *module_name,
 		orbit_entry entry_func, void*(*init_func)(void));
-// void obDestroy(orbit_module*);
 
 bool is_orbit_context(void);
 
@@ -206,154 +209,160 @@ bool is_orbit_context(void);
  * Return non-negative values on success. Return -1 on error, and stores error
  * code in `errno'.
  */
-long orbit_call(struct orbit_module *module,
-		size_t npool, struct orbit_pool** pools,
+long orbit_call(struct orbit *ob,
+		size_t narea, struct orbit_area** areas,
 		orbit_entry func, void *arg, size_t argsize);
 
 /*
  * Create an async orbit call.
  *
- * If the call succeeds and `task` is not NULL, task information will be stored in `task`.
+ * If the call succeeds and `future` is not NULL, future information will be stored in `future`.
  * Return 0 on success. Other value indicates failure.
  */
-int orbit_call_async(struct orbit_module *module, unsigned long flags,
-		size_t npool, struct orbit_pool** pools,
-		orbit_entry func, void *arg, size_t argsize, struct orbit_task *task);
+int orbit_call_async(struct orbit *ob, unsigned long flags,
+		size_t narea, struct orbit_area** areas,
+		orbit_entry func, void *arg, size_t argsize, struct orbit_future *future);
 
-/** Cancel orbit task by taskid */
-int orbit_cancel_by_task(struct orbit_task *task);
+/** Cancel orbit future by taskid */
+int orbit_cancel(struct orbit_future *future);
 
 /**
- * Cancel orbit task by argument
+ * Cancel orbit future by argument
  *
  * Kernel will byte-wise compare the args with the args in the queue.
  */
-int orbit_cancel_by_arg(struct orbit_module *module, void *arg, size_t argsize);
-
-// Functions to send updates in the checker and receive in the main program.
-unsigned long orbit_send(const struct orbit_update *update);
-unsigned long orbit_recv(struct orbit_task *task, struct orbit_update *update);
+int orbit_cancel_by_arg(struct orbit *ob, void *arg, size_t argsize);
 
 /* Page level granularity update */
 unsigned long orbit_commit(void);
+
+struct orbit_allocator_method;
 
 /* User land runtime function that will be called by the kernel in orbit
  * context and will then call the real function. We do not really need....*/
 // void obCallWrapper(orbit_entry entry_point, void *auxptr);
 
-/* Create an return a memory allocation pool of size 'init_pool_size'
+/* Create an return a memory allocation area of size 'init_pool_size'
  * to be used by an orbit.
  *
- * If argument <ob> is specified, the pool will be created and mapped to the
- * address space of <ob>. If <ob> is NULL, the pool will be created and mapped
+ * If argument <ob> is specified, the area will be created and mapped to the
+ * address space of <ob>. If <ob> is NULL, the area will be created and mapped
  * later to a new orbit, which is a discouraged way.
 */
-struct orbit_pool *orbit_pool_create(struct orbit_module *ob,
-				     size_t init_pool_size);
-struct orbit_pool *orbit_pool_create_at(struct orbit_module *ob,
-					size_t init_pool_size, void *addr);
+struct orbit_area *orbit_area_create(struct orbit *ob,
+				     size_t init_pool_size,
+				     const struct orbit_allocator_method *method);
+struct orbit_area *orbit_area_create_at(struct orbit *ob,
+					size_t init_pool_size, void *addr,
+					const struct orbit_allocator_method *method);
 
-// void obPoolDestroy(pool);
+// void obPoolDestroy(area);
 
 
 /* ====== Allocator API ===== */
 
-struct orbit_allocator {
-	struct orbit_allocator_vtable *vtable;
+struct orbit_allocator;
+
+typedef struct orbit_allocator *(*__orbit_allocator_create_f)
+	(void *start, size_t size, void **data_start, size_t *data_length,
+	 const struct orbit_allocator_method *method);
+
+struct orbit_allocator_method {
+	__orbit_allocator_create_f __create;
 };
 
-struct orbit_allocator_vtable {
-	void*(*alloc)(struct orbit_allocator *alloc, size_t size);
-	void(*free)(struct orbit_allocator *alloc, void *ptr);
-	void*(*realloc)(struct orbit_allocator *alloc, void *oldptr, size_t newsize);
-	// void(*data_range)(struct orbit_allocator *alloc, void **start, size_t *length);
-	void(*destroy)(struct orbit_allocator *alloc);
+struct orbit_linear_allocator_method {
+	struct orbit_allocator_method method;
+	bool use_meta;
 };
 
-/* Destroy an allocator */
-void orbit_allocator_destroy(struct orbit_allocator *alloc);
-
-/* Create an allocator using underlying pool */
-struct orbit_allocator *orbit_allocator_from_pool(struct orbit_pool *pool, bool use_meta);
+extern const struct orbit_allocator_method *orbit_linear_default;
+extern const struct orbit_allocator_method *orbit_bitmap_default;
 
 /* Get useful data range. This is used by orbit call or send. */
 // void orbit_allocator_data_range(struct orbit_allocator *alloc, void **start, size_t *length);
 
-void *__orbit_alloc(struct orbit_allocator *alloc, size_t size,
+#ifdef ORBIT_DEBUG
+
+void *__orbit_alloc(struct orbit_area *area, size_t size,
 			const char *file, int line);
-static inline void *__orbit_calloc(struct orbit_allocator *alloc, size_t size,
+static inline void *__orbit_calloc(struct orbit_area *area, size_t size,
 			const char *file, int line)
 {
-	return memset(__orbit_alloc((alloc), size, file, line), 0, size);
+	return memset(__orbit_alloc(area, size, file, line), 0, size);
 }
-#define orbit_alloc(alloc, size) \
-	__orbit_alloc(alloc, size, __FILE__, __LINE__)
-#define orbit_calloc(alloc, size) \
-	__orbit_calloc(alloc, size, __FILE__, __LINE__)
-void orbit_free(struct orbit_allocator *alloc, void *ptr);
-void *orbit_realloc(struct orbit_allocator *alloc, void *oldptr, size_t newsize);
-#define orbit_allocated_by(ptr, alloc) \
-	(alloc != NULL && (ptr >= alloc->start) && (ptr < alloc->start + alloc->length))
+#define orbit_alloc(area, size) \
+	__orbit_alloc(area, size, __FILE__, __LINE__)
+#define orbit_calloc(area, size) \
+	__orbit_calloc(area, size, __FILE__, __LINE__)
 
-/* ===== Scratch ADT ===== */
+#else
+
+void *orbit_alloc(struct orbit_area *area, size_t size);
+static inline void *orbit_calloc(struct orbit_area *area, size_t size)
+{
+	return memset(orbit_alloc(area, size), 0, size);
+}
+
+#endif
+
+void orbit_free(struct orbit_area *area, void *ptr);
+void *orbit_realloc(struct orbit_area *area, void *oldptr, size_t newsize);
+/* #define orbit_allocated_by(ptr, area) \
+	(area != NULL && (ptr >= area->start) && (ptr < area->start + area->length)) */
+
+bool orbit_linear_allocator_reset(struct orbit_allocator *base);
+
+/* ===== Update ADT ===== */
 
 /*
  * Encoded array of orbit updates and operations.
  *
- * Scratch needs an underlying memory region.  We typically use a orbit pool.
+ * Update's backing memory is a orbit area. The updates is allocated in the area.
  *
- * This works like vector<any>.
- * User can push scratch ADT elements: update, operation, any to a scratch.
+ * This works like deque<any>.
+ * User can push orbit_update ADT elements: update, operation, any to a orbit_update.
  * User can also iterate througt the elements.
  */
-struct orbit_scratch {
-	void *ptr;
-	size_t cursor;
-	size_t size_limit;
-	size_t count;	/* Number of elements */
-	struct orbit_allocator *any_alloc;  /* allocator used by open_any */
+struct __orbit_block_list;
+struct orbit_update {
+	struct __orbit_block_list *updates;
+	struct orbit_area area;
 };
 
 /* TODO: specialized query APIs */
-union orbit_result {
+struct orbit_result {
 	unsigned long retval;
-	struct orbit_scratch scratch;
+	struct orbit_update *update;
 };
 
 /*
- * Set global pool to use to create orbit_scratch.
- *
- * Typically we use orbit pool mode "MOVE" for performance reason.
- *
- * This needs to be called before creating a scratch.
- */
-int orbit_scratch_set_pool(struct orbit_pool *pool);
-
-/*
- * Get a scratch space.
+ * Get a orbit_update scratch space.
  *
  * After each successful sendv(), the caller needs to call this again to
  * allocate a new scratch space.
  */
-int orbit_scratch_create(struct orbit_scratch *s);
-// void orbit_scratch_free(orbit_scratch *s);
+int orbit_update_create(struct orbit_update *s);
+// void orbit_update_free(orbit_update *s);
 
-/* Push orbit_operation to scratch */
-int orbit_scratch_push_operation(struct orbit_scratch *s,
-		orbit_operation_func func, size_t argc, unsigned long argv[]);
-/* Push orbit_update to scratch */
-int orbit_scratch_push_update(struct orbit_scratch *s, void *ptr, size_t length);
-/* Push orbit_any to scratch.  Returns a space of size `length`.
+int orbit_update_set_area(struct orbit_area *area);
+
+/* Push orbit_operation to orbit_update */
+int orbit_update_add_operation(struct orbit_update *s,
+		orbit_operation_func func, void *arg, size_t size);
+/* Push orbit_modify to orbit_update */
+int orbit_update_add_modify(struct orbit_update *s, void *ptr, size_t length);
+/* Push orbit_data to orbit_update.  Returns a space of size `length`.
  * If ptr is non-NULL, it will copy the data into that area.
  * If ptr is NULL, it returns `length` space from scratch to be filled by the caller. */
-void *orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length);
+void *orbit_update_add_data(struct orbit_update *s, void *ptr, size_t length);
 
 #if defined(__cplusplus) && __cplusplus >= 201103L
 
 // TODO: rewrite two versions with better C macro and pure C++11 arg forward.
 // We can also provide compiler support for structuring lambda s.t. it can
 // written ergonomically and be sent safely.
-#define orbit_scratch_run1(s, arg1t, arg1n, body) do { \
+#define orbit_update_run1(s, arg1t, arg1n, body) do { \
 		unsigned long argv[] { (unsigned long)(arg1n), }; \
 		unsigned long (*f)(size_t argc, unsigned long argv[]) = \
 		[](size_t argc, unsigned long argv[]) -> unsigned long { \
@@ -361,9 +370,9 @@ void *orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length);
 			body; \
 			return 0; \
 		}; \
-		orbit_scratch_push_operation(s, f, 1, argv); \
+		orbit_update_push_operation(s, f, 1, argv); \
 	} while (0)
-#define orbit_scratch_run2(s, arg1t, arg1n, arg2t, arg2n, body) do { \
+#define orbit_update_run2(s, arg1t, arg1n, arg2t, arg2n, body) do { \
 		unsigned long argv[] { (unsigned long)(arg1n), (unsigned long)(arg2n), }; \
 		unsigned long (*f)(size_t argc, unsigned long argv[]) = \
 		[](size_t argc, unsigned long argv[]) -> unsigned long { \
@@ -372,9 +381,9 @@ void *orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length);
 			body; \
 			return 0; \
 		}; \
-		orbit_scratch_push_operation(s, f, 2, argv); \
+		orbit_update_push_operation(s, f, 2, argv); \
 	} while (0)
-#define orbit_scratch_run3(s, arg1t, arg1n, arg2t, arg2n, arg3t, arg3n, body) do { \
+#define orbit_update_run3(s, arg1t, arg1n, arg2t, arg2n, arg3t, arg3n, body) do { \
 		unsigned long argv[] { (unsigned long)(arg1n), \
 			(unsigned long)(arg2n), (unsigned long)(arg3n) }; \
 		unsigned long (*f)(size_t argc, unsigned long argv[]) = \
@@ -385,56 +394,20 @@ void *orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length);
 			body; \
 			return 0; \
 		}; \
-		orbit_scratch_push_operation(s, f, 3, argv); \
+		orbit_update_push_operation(s, f, 3, argv); \
 	} while (0)
 
 #endif /* C++11 */
 
 /*
- * Create a pending "any" record in the scratch and return an allocator.
- *
- * This is useful to use allocation APIs in scratch space.
- *
- * Note that if the user calls any operations on this scratch other than
- * allocation APIs after this call, the "any" record will automatically be
- * closed and the allocator returned here will be invalidated and should not
- * be used any more.
- * */
-struct orbit_allocator *orbit_scratch_open_any(struct orbit_scratch *s, bool use_meta);
-/*
- * Close the pending "any" record and destroy the allocator for it.
- *
- * Note that after this function, the allocator returned from previous
- * "open_any" will be invalidated and should not be used any more.
- *
- * This will also be automatically called when the user calls any operations
- * on this scratch.  E.g. push_update, sendv, etc. will all close the
- * "open_any" automatically.
- */
-int orbit_scratch_close_any(struct orbit_scratch *s);
-
-/*
- * Send a scratch during orbit_call to main program.
- *
- * Return 0 on success, otherwise -1 and sets errno.
- *
- * Note: After success send, the scratch will not be accessible any more!
- * If the send fails, this scratch is still accessible, and the caller can
- * optionally update it and resend.
- * If the caller decides not to send it, the caller needs to call create()
- * again to request a new scratch space.
- */
-int orbit_sendv(struct orbit_scratch *s);
-
-/*
- * Receive in the main program.  Expect a scratch or return value from
+ * Receive in the main program.  Expect a return value or with update from
  * orbit_call.
  *
- * Returns 1 if update available, and modifies result->scratch;
+ * Returns 1 if update available, and modifies result->scratch & retval;
  * Returns 0 on end of updates, and modifies result->retval;
  * Returns -1 on error, and sets errno.
  */
-int orbit_recvv(union orbit_result *result, struct orbit_task *task);
+int pull_orbit(struct orbit_result *result, struct orbit_future *future);
 
 /*
  * Terminate the orbit identified by gobid for the current process.
@@ -448,19 +421,18 @@ int orbit_destroy(obid_t gobid);
  */
 int orbit_destroy_all();
 
-bool orbit_exists(struct orbit_module *ob);
-bool orbit_gone(struct orbit_module *ob);
+bool orbit_exists(struct orbit *ob);
+bool orbit_gone(struct orbit *ob);
 
-enum orbit_type orbit_apply(struct orbit_scratch *s, bool yield);
-enum orbit_type orbit_apply_one(struct orbit_scratch *s, bool yield);
-enum orbit_type orbit_skip(struct orbit_scratch *s, bool yield);
-enum orbit_type orbit_skip_one(struct orbit_scratch *s, bool yield);
+enum orbit_type orbit_apply(struct orbit_update *s, bool yield);
+enum orbit_type orbit_apply_one(struct orbit_update *s, bool yield);
+enum orbit_type orbit_skip(struct orbit_update *s, bool yield);
+enum orbit_type orbit_skip_one(struct orbit_update *s, bool yield);
 
-struct orbit_repr *orbit_scratch_first(struct orbit_scratch *s);
-struct orbit_repr *orbit_scratch_next(struct orbit_scratch *s);
-static inline bool orbit_scratch_empty(struct orbit_scratch *s) {
-       return s->count == 0;
-}
+struct orbit_repr *orbit_update_first(struct orbit_update *s);
+struct orbit_repr *orbit_update_next(struct orbit_update *s);
+bool orbit_update_empty(struct orbit_update *s);
+size_t orbit_update_size(struct orbit_update *s);
 
 #ifdef __cplusplus
 }
@@ -471,7 +443,7 @@ static inline bool orbit_scratch_empty(struct orbit_scratch *s) {
 #define NOEXCEPT throw()
 #endif
 
-namespace orbit {
+namespace ob {
 
 void *__orbit_allocate_wrapper(orbit_allocator *alloc, std::size_t n, std::size_t type_size);
 void __orbit_deallocate_wrapper(orbit_allocator *alloc, void *ptr, std::size_t n) NOEXCEPT;

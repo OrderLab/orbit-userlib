@@ -1,4 +1,5 @@
 #include "orbit.h"
+#include "orbit_lowlevel.h"
 #include "bitmap_allocator.h"
 #include "private/bitmap_allocator_private.h"
 
@@ -90,7 +91,7 @@ struct orbit_bitmap_allocator {
 	struct page_meta page_meta[];	/* Metadata of all pages */
 };
 
-extern struct orbit_allocator_vtable orbit_bitmap_allocator_vtable;
+extern const struct orbit_allocator_vtable orbit_bitmap_allocator_vtable;
 
 /* Allocation record header before each allocated data. */
 struct alloc_header {
@@ -109,11 +110,13 @@ static inline int page_meta_init(struct page_meta *meta)
 }
 
 struct orbit_allocator *orbit_bitmap_allocator_create(void *start, size_t size,
-		void **data_start, size_t *data_length)
+		void **data_start, size_t *data_length,
+		const struct orbit_allocator_method *method)
 {
 	size_t npages;
 	size_t i;
 	int ret;
+	(void)method;
 
 	size = (byte*)round_down_page((size_t)start + size) - (byte*)start;
 	npages = (size - allocator_size) / (meta_size + PAGE_SIZE);
@@ -488,7 +491,7 @@ void *orbit_bitmap_realloc(struct orbit_allocator *base, void *oldptr, size_t ne
 	/* struct page_meta *meta; */
 
 	if (!oldptr)
-		return orbit_alloc(base, newsize);
+		return orbit_allocator_alloc(base, newsize);
 
 	if (translate(alloc, oldptr, &pagei, &blocki))
 		return NULL;
@@ -514,12 +517,18 @@ void *orbit_bitmap_realloc(struct orbit_allocator *base, void *oldptr, size_t ne
 	return mem;
 }
 
-struct orbit_allocator_vtable orbit_bitmap_allocator_vtable = {
+const struct orbit_allocator_vtable orbit_bitmap_allocator_vtable = {
 	.alloc = orbit_bitmap_alloc,
 	.free = orbit_bitmap_free,
 	.realloc = orbit_bitmap_realloc,
 	.destroy = orbit_bitmap_allocator_destroy,
 };
+
+static const struct orbit_allocator_method orbit_bitmap_default_value = {
+	.__create = orbit_bitmap_allocator_create,
+};
+
+const struct orbit_allocator_method *orbit_bitmap_default = &orbit_bitmap_default_value;
 
 /* TODO: move this out and write ACU test in the test case file */
 int test_bitmap() {

@@ -1,4 +1,5 @@
 #include "orbit.h"
+#include "orbit_lowlevel.h"
 #include "linear_allocator.h"
 #include "bitmap_allocator.h"
 
@@ -17,11 +18,11 @@
 #define SYS_ORBIT_CREATE	436
 #define SYS_ORBIT_CALL		437
 #define SYS_ORBIT_RETURN	438
-#define SYS_ORBIT_SEND		439
-#define SYS_ORBIT_RECV		440
+/* #define SYS_ORBIT_SEND		439 */
+/* #define SYS_ORBIT_RECV		440 */
 #define SYS_ORBIT_COMMIT	441
-#define SYS_ORBIT_SENDV		442
-#define SYS_ORBIT_RECVV		443
+#define SYS_ORBIT_PUSH		442
+#define SYS_ORBIT_PULL		443
 #define SYS_ORBIT_DESTROY	444
 #define SYS_ORBIT_DESTROY_ALL	445
 #define SYS_ORBIT_STATE		446
@@ -57,40 +58,61 @@ _define_round_up(4096)
 
 static struct {
 	/* Underlying global pool used to create scratch. */
-	struct orbit_pool *scratch_pool;
+	struct orbit_area *scratch_pool;
 } info;
+
+/* Block list data structure for orbit update */
+
+struct __orbit_block_list_elem {
+	TAILQ_ENTRY(__orbit_block_list_elem) elem;
+#define __ORBIT_BLOCK_SIZE ((512 - sizeof(TAILQ_ENTRY(__orbit_block_list_elem))) \
+				/ sizeof(struct orbit_repr))
+	struct orbit_repr array[__ORBIT_BLOCK_SIZE];
+};
+TAILQ_HEAD(__orbit_block_list_head, __orbit_block_list_elem);
+
+struct __orbit_block_list {
+	size_t count;	/* Number of elements */
+	size_t head, tail;	/* Cursor in the first and last snap_block */
+	struct __orbit_block_list_head list;
+};
 
 static void scratch_renew(size_t size_hint)
 {
 	// FIXME: should create the pool for a specific orbit
 	if (/* info.auto_renew && */ !info.scratch_pool)
-		info.scratch_pool = orbit_pool_create(NULL, size_hint);
+		info.scratch_pool = orbit_area_create(NULL, size_hint,
+				orbit_bitmap_default);
 }
 
 static void info_init(void)
 {
 	// FIXME: should create the pool for a specific orbit
 	(void)scratch_renew;
-	info.scratch_pool = orbit_pool_create(NULL, 1024 * 1024);
+	info.scratch_pool = orbit_area_create(NULL, 1024 * 1024,
+			orbit_bitmap_default);
 }
 
 long orbit_taskid;
 static bool orbit_context = false;
 
-struct orbit_module *orbit_create(const char *module_name,
+struct orbit *orbit_create(const char *module_name,
 		orbit_entry entry_func, void*(*init_func)(void))
 {
-	struct orbit_module *ob;
-	unsigned long ret = 0;
+	struct orbit *ob;
+	struct orbit_result ret;
 	char argbuf[ARG_SIZE_MAX];
 	orbit_entry func_once = NULL;
 	void *store = NULL;
 
-	ob = (struct orbit_module*)malloc(sizeof(struct orbit_module));
+	ob = (struct orbit*)malloc(sizeof(struct orbit));
 	if (ob == NULL) return NULL;
 
 	pid_t mpid;
 	obid_t lobid, gobid;
+
+	if (!info.scratch_pool)
+		orbit_update_set_area(orbit_area_create(NULL, 64 * 1024 * 1024, NULL));
 
 	gobid = syscall(SYS_ORBIT_CREATE, module_name, argbuf, &mpid, &lobid, &func_once);
 	if (gobid == -1) {
@@ -110,13 +132,14 @@ struct orbit_module *orbit_create(const char *module_name,
 		while (1) {
 			/* TODO: currently a hack to return for the first time
 			 * for initialization. */
-			orbit_taskid = syscall(SYS_ORBIT_RETURN, ret);
+			orbit_taskid = syscall(SYS_ORBIT_RETURN, ret.retval);
 			if (orbit_taskid < 0) {
 				fprintf(stderr, "orbit returns ERROR, exit\n");
 				break;
 			}
 			ret = func_once ? func_once(store, argbuf)
 					: entry_func(store, argbuf);
+			orbit_push(&ret);
 		}
 		exit(0);
 	}
@@ -144,33 +167,33 @@ bool is_orbit_context(void)
 struct pool_range_kernel {
 	unsigned long start;
 	unsigned long end;
-	enum orbit_pool_mode mode;
+	enum orbit_area_mode mode;
 };
 
 struct orbit_call_args_kernel {
 	unsigned long flags;
 	obid_t gobid;
-	size_t npool;
-	struct pool_range_kernel *pools;
+	size_t narea;
+	struct pool_range_kernel *areas;
 	orbit_entry func;
 	void *arg;
 	size_t argsize;
 };
 
-static long orbit_call_inner(struct orbit_module *module, unsigned long flags,
-		size_t npool, struct orbit_pool** pools,
+static long orbit_call_inner(struct orbit *module, unsigned long flags,
+		size_t narea, struct orbit_area** areas,
 		orbit_entry func, void *arg, size_t argsize)
 {
 	long ret;
 
-	/* This requries C99.  We can limit number of pools otherwise.*/
-	struct pool_range_kernel pools_kernel[npool];
+	/* This requries C99.  We can limit number of areas otherwise.*/
+	struct pool_range_kernel pools_kernel[narea];
 
 	struct orbit_call_args_kernel args = { flags, module->gobid,
-			npool, pools_kernel, func, arg, argsize, };
+			narea, pools_kernel, func, arg, argsize, };
 
-	for (size_t i = 0; i < npool; ++i) {
-		struct orbit_pool *pool = pools[i];
+	for (size_t i = 0; i < narea; ++i) {
+		struct orbit_area *pool = areas[i];
 		unsigned long start = (unsigned long)pool->data_start;
 		/* TODO: directly using data_{start,length} is not actually safe.
 		 * However, if we hold all alloc->lock until orbit_call ends,
@@ -186,24 +209,24 @@ static long orbit_call_inner(struct orbit_module *module, unsigned long flags,
 	return ret;
 }
 
-long orbit_call(struct orbit_module *module,
-		size_t npool, struct orbit_pool** pools,
+long orbit_call(struct orbit *module,
+		size_t narea, struct orbit_area** areas,
 		orbit_entry func, void *arg, size_t argsize)
 {
-	return orbit_call_inner(module, 0, npool, pools, func, arg, argsize);
+	return orbit_call_inner(module, 0, narea, areas, func, arg, argsize);
 }
 
-int orbit_call_async(struct orbit_module *module, unsigned long flags,
-		size_t npool, struct orbit_pool** pools,
-		orbit_entry func, void *arg, size_t argsize, struct orbit_task *task)
+int orbit_call_async(struct orbit *module, unsigned long flags,
+		size_t narea, struct orbit_area** areas,
+		orbit_entry func, void *arg, size_t argsize, struct orbit_future *future)
 {
 	long ret = orbit_call_inner(module, flags | ORBIT_ASYNC,
-			npool, pools, func, arg, argsize);
+			narea, areas, func, arg, argsize);
 	if (ret < 0)
 		return ret;
-	if (task) {
-		task->orbit = module;
-		task->taskid = ret;
+	if (future) {
+		future->orbit = module;
+		future->taskid = ret;
 	}
 	return 0;
 }
@@ -223,16 +246,16 @@ struct orbit_cancel_args {
 	};
 };
 
-int orbit_cancel_by_task(struct orbit_task *task) {
+int orbit_cancel_by_task(struct orbit_future *future) {
 	struct orbit_cancel_args args = {
-		.gobid = task->orbit->gobid,
+		.gobid = future->orbit->gobid,
 		.kind = ORBIT_CANCEL_TASKID,
-		.taskid = task->taskid,
+		.taskid = future->taskid,
 	};
 	return syscall(SYS_ORBIT_CANCEL, &args);
 }
 
-int orbit_cancel_by_arg(struct orbit_module *module, void *arg, size_t argsize) {
+int orbit_cancel_by_arg(struct orbit *module, void *arg, size_t argsize) {
 	struct orbit_cancel_args args = {
 		.gobid = module->gobid,
 		.kind = ORBIT_CANCEL_ARGS,
@@ -242,92 +265,83 @@ int orbit_cancel_by_arg(struct orbit_module *module, void *arg, size_t argsize) 
 	return syscall(SYS_ORBIT_CANCEL, &args);
 }
 
-unsigned long orbit_send(const struct orbit_update *update) {
-	return syscall(SYS_ORBIT_SEND, update);
-}
-
-unsigned long orbit_recv(struct orbit_task *task, struct orbit_update *update) {
-	return syscall(SYS_ORBIT_RECV, task->orbit->gobid, task->taskid, update);
-}
-
 unsigned long orbit_commit(void) {
 	return syscall(SYS_ORBIT_COMMIT);
 }
 
-inline struct orbit_pool *orbit_pool_create(struct orbit_module *ob,
-				     size_t init_pool_size)
+void orbit_area_init(struct orbit_area *area, void *rawptr, unsigned long length,
+		enum orbit_area_mode mode)
+{
+	area->rawptr = rawptr;
+	area->length = length;
+	/* Creating allocator on area will rewrite these values. */
+	area->data_start = rawptr;
+	area->data_length = 0;
+	area->mode = mode;
+	area->alloc = NULL;
+}
+
+struct orbit_area *orbit_area_create(struct orbit *ob,
+				     size_t init_pool_size,
+				     const struct orbit_allocator_method *method)
 {
 	const int DBG = 0;
 	void *MMAP_HINT = DBG ? (void*)0x8000000 : NULL;
-	return orbit_pool_create_at(ob, init_pool_size, MMAP_HINT);
+	return orbit_area_create_at(ob, init_pool_size, MMAP_HINT, method);
 }
 
-struct orbit_pool *orbit_pool_create_at(struct orbit_module *ob,
-					size_t init_pool_size, void *addr)
+struct orbit_area *orbit_area_create_at(struct orbit *ob,
+					size_t init_pool_size, void *addr,
+					const struct orbit_allocator_method *method)
 {
-	struct orbit_pool *pool;
-	void *area;
+	struct orbit_area *area;
+	void *mem;
 
 	init_pool_size = round_up_page(init_pool_size);
 
-	pool = (struct orbit_pool*)malloc(sizeof(struct orbit_pool));
-	if (pool == NULL) goto pool_malloc_fail;
+	area = (struct orbit_area*)malloc(sizeof(struct orbit_area));
+	if (area == NULL) goto pool_malloc_fail;
 
 	if (ob != NULL) {
 		long ret = syscall(SYS_ORBIT_MMAP_PAIR, ob->gobid, addr,
 				   init_pool_size, PROT_READ | PROT_WRITE,
 				   MAP_PRIVATE | MAP_ANONYMOUS);
-		area = ret < 0 ? NULL : (void *) ret;
+		mem = ret < 0 ? NULL : (void *) ret;
 	} else {
-		area = mmap(addr, init_pool_size, PROT_READ | PROT_WRITE,
+		mem = mmap(addr, init_pool_size, PROT_READ | PROT_WRITE,
 			    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	}
-	if (area == NULL) goto mmap_fail;
+	if (mem == NULL) goto mmap_fail;
 
-	pool->rawptr = area;
-	pool->length = init_pool_size;
-	/* Creating allocator on pool will rewrite these values. */
-	pool->data_start = area;
-	pool->data_length = 0;
-	pool->mode = ORBIT_COW;
+	orbit_area_init(area, mem, init_pool_size, ORBIT_COW);
+	area->alloc = method ? orbit_allocator_from_area(area, method) : NULL;
 
-	return pool;
+	return area;
 
 mmap_fail:
-	free(pool);
+	free(area);
 pool_malloc_fail:
 	return NULL;
 }
-// void orbit_pool_destroy(pool);
+// void orbit_area_destroy(area);
 
 
 /* ====== Allocator API ===== */
 
-/* Destroy an allocator */
-void orbit_allocator_destroy(struct orbit_allocator *alloc)
-{
-	alloc->vtable->destroy(alloc);
-}
+/* === Low-level APIs === */
 
-/* Create an allocator using underlying pool */
-struct orbit_allocator *orbit_allocator_from_pool(struct orbit_pool *pool, bool use_meta)
-{
-	if (use_meta)
-		return orbit_bitmap_allocator_create(pool->rawptr, pool->length,
-				&pool->data_start, &pool->data_length);
-
-	return orbit_linear_allocator_create(pool->rawptr, pool->length,
-			&pool->data_start, &pool->data_length, use_meta);
-}
-
-void *__orbit_alloc(struct orbit_allocator *alloc, size_t size,
-			const char *file, int line)
+#ifdef ORBIT_DEBUG
+void *__orbit_allocator_alloc(struct orbit_allocator *alloc, size_t size,
+			const char *file, int line);
+#else
+void *orbit_allocator_alloc(struct orbit_allocator *alloc, size_t size)
 {
 	void *ptr;
 
 	ptr = alloc->vtable->alloc(alloc, size);
 
 #define OUTPUT_ORBIT_ALLOC 0
+#ifdef ORBIT_DEBUG
 #if OUTPUT_ORBIT_ALLOC
 	if (!ptr) return NULL;
 	void __mysql_orbit_alloc_callback(void *, size_t, const char *, int);
@@ -336,173 +350,220 @@ void *__orbit_alloc(struct orbit_allocator *alloc, size_t size,
 	(void)file;
 	(void)line;
 #endif
+#endif
 
 	return ptr;
 }
+#endif
 
-void orbit_free(struct orbit_allocator *alloc, void *ptr)
+void orbit_allocator_free(struct orbit_allocator *alloc, void *ptr)
 {
 	alloc->vtable->free(alloc, ptr);
 }
 
-void *orbit_realloc(struct orbit_allocator *alloc, void *oldptr, size_t newsize)
+void *orbit_allocator_realloc(struct orbit_allocator *alloc, void *oldptr, size_t newsize)
 {
 	return alloc->vtable->realloc(alloc, oldptr, newsize);
 }
 
-
-/* ===== Scratch ADT ===== */
-
-/* Set global pool used to create orbit_scratch. */
-int orbit_scratch_set_pool(struct orbit_pool *pool)
+/* Destroy an allocator */
+void orbit_allocator_destroy(struct orbit_allocator *alloc)
 {
-	if (!pool)
+	alloc->vtable->destroy(alloc);
+}
+
+/* Create an allocator using underlying alloc */
+struct orbit_allocator *orbit_allocator_from_area(struct orbit_area *area,
+		const struct orbit_allocator_method *method)
+{
+	if (!method)
+		return NULL;
+	return method->__create(area->rawptr, area->length,
+			&area->data_start, &area->data_length, method);
+}
+
+/* === Public APIs === */
+
+#ifdef ORBIT_DEBUG
+void *__orbit_alloc(struct orbit_area *area, size_t size,
+			const char *file, int line)
+{
+	return __orbit_allocator_alloc(area->alloc, size, file, line);
+}
+#else
+void *orbit_alloc(struct orbit_area *area, size_t size)
+{
+	return orbit_allocator_alloc(area->alloc, size);
+}
+#endif
+
+void orbit_free(struct orbit_area *area, void *ptr)
+{
+	orbit_allocator_free(area->alloc, ptr);
+}
+
+void *orbit_realloc(struct orbit_area *area, void *oldptr, size_t newsize)
+{
+	return orbit_allocator_realloc(area->alloc, oldptr, newsize);
+}
+
+
+/* ===== Update ADT ===== */
+
+/* Set global area used to create orbit_update. */
+int orbit_update_set_area(struct orbit_area *area)
+{
+	if (!area)
 		return -1;
-	info.scratch_pool = pool;
+	info.scratch_pool = area;
 	return 0;
 }
 
-int orbit_scratch_create(struct orbit_scratch *s)
+int orbit_update_create(struct orbit_update *s)
 {
-	struct orbit_pool *info_s = info.scratch_pool;
+	struct orbit_area *info_s = info.scratch_pool;
 
 	if (!info_s || info_s->length == info_s->data_length)
 		return -1;
 
-	s->ptr = (char*)info_s->rawptr + info_s->data_length;
-	s->size_limit = info_s->length - info_s->data_length;
-	s->cursor = 0;
-	s->count = 0;
-	s->any_alloc = NULL;
+	orbit_area_init(&s->area, (char*)info_s->rawptr + info_s->data_length,
+			info_s->length - info_s->data_length, info_s->mode);
+	s->area.alloc = orbit_allocator_from_area(&s->area, orbit_linear_default);
+
+	s->updates = orbit_alloc(&s->area, sizeof(*s->updates));
+	if (s->updates == NULL) {
+		orbit_allocator_destroy(s->area.alloc);
+		return -1;
+	}
+	s->updates->count = s->updates->head = s->updates->tail = 0;
+	TAILQ_INIT(&s->updates->list);
 
 	return 0;
 }
 
-struct orbit_allocator *orbit_scratch_open_any(struct orbit_scratch *s, bool use_meta)
+
+static struct orbit_repr *
+orbit_update_front(struct orbit_update *s)
 {
-	struct orbit_repr *record;
-	size_t rec_size = sizeof(struct orbit_repr);
-
-	orbit_scratch_close_any(s);
-
-	if (rec_size > s->size_limit - s->cursor)
+	struct __orbit_block_list *updates = s->updates;
+	struct __orbit_block_list_elem *block;
+	if (updates->count == 0)
 		return NULL;
-
-	record = (struct orbit_repr*)((char*)s->ptr + s->cursor);
-	record->type = ORBIT_ANY;
-	record->any.length = 0;  /* Unknown size, filled by `conclude' */
-
-	s->any_alloc = orbit_linear_allocator_create(
-			record->any.data,
-			s->size_limit - (record->any.data - (char*)s->ptr),
-			NULL,
-			&record->any.length,
-			use_meta);
-
-	return s->any_alloc;
+	block = TAILQ_FIRST(&updates->list);
+	return &block->array[updates->head];
 }
 
-int orbit_scratch_close_any(struct orbit_scratch *s)
+static void orbit_update_pop(struct orbit_update *s)
 {
-	struct orbit_repr *record;
-
-	if (!s->any_alloc)
-		return s->count;
-
-	record = (struct orbit_repr*)((char*)s->ptr + s->cursor);
-
-	s->cursor += sizeof(struct orbit_repr) + record->any.length;
-	s->cursor = round_up_4(s->cursor);
-
-	orbit_allocator_destroy(s->any_alloc);
-	s->any_alloc = NULL;
-
-	return ++s->count;
+	struct __orbit_block_list *updates = s->updates;
+	struct __orbit_block_list_elem *block;
+	if (updates->count == 0) return;
+	--updates->count;
+	++updates->head;
+	if (updates->head == __ORBIT_BLOCK_SIZE || updates->count == 0) {
+		block = TAILQ_FIRST(&updates->list);
+		TAILQ_REMOVE(&updates->list, block, elem);
+		/* if (s->area.alloc)
+			orbit_free(&s->area, block); */
+		if (updates->count == 0)
+			updates->tail = 0;
+		updates->head = 0;
+	}
 }
 
-int orbit_scratch_push_update(struct orbit_scratch *s, void *ptr, size_t length)
+static struct orbit_repr *
+orbit_update_push_allocate(struct orbit_update *s, size_t size, void **data)
 {
-	struct orbit_repr *record;
-	size_t rec_size = sizeof(struct orbit_repr) + length;
+	struct __orbit_block_list *updates = s->updates;
+	struct __orbit_block_list_elem *block;
+	struct orbit_repr *repr;
 
-	orbit_scratch_close_any(s);
+	if (size > __ORBIT_REPR_SMALL_DATA) {
+		*data = orbit_alloc(&s->area, size);
+		if (*data == NULL)
+			return NULL;
+	}
 
-	if (rec_size > s->size_limit - s->cursor)
+	if (TAILQ_EMPTY(&updates->list) || updates->tail == __ORBIT_BLOCK_SIZE) {
+		block = orbit_alloc(&s->area, sizeof(struct __orbit_block_list_elem));
+		if (block == NULL)
+			return NULL;
+		TAILQ_INSERT_TAIL(&updates->list, block, elem);
+		updates->tail = 0;
+	} else {
+		block = TAILQ_LAST(&updates->list, __orbit_block_list_head);
+	}
+	++updates->count;
+
+	repr = &block->array[updates->tail++];
+
+	if (size <= __ORBIT_REPR_SMALL_DATA)
+		*data = repr->small_data;
+
+	return repr;
+};
+
+int orbit_update_add_modify(struct orbit_update *s, void *ptr, size_t length)
+{
+	void *data;
+	struct orbit_repr *record = orbit_update_push_allocate(s, length, &data);
+
+	if (!record)
 		return -1;	/* No enough space */
 
-	record = (struct orbit_repr*)((char*)s->ptr + s->cursor);
+	record->type = ORBIT_MODIFY;
+	record->modify = (struct orbit_modify) { ptr, length, data };
+	memcpy(data, ptr, length);
 
-	record->type = ORBIT_UPDATE;
-	record->update.ptr = ptr;
-	record->update.length = length;
-	memcpy(record->update.data, ptr, length);
-
-	s->cursor += rec_size;
-	s->cursor = round_up_4(s->cursor);
-
-	return ++s->count;
+	return s->updates->count;
 }
 
-void *orbit_scratch_push_any(struct orbit_scratch *s, void *ptr, size_t length)
+void *orbit_update_add_data(struct orbit_update *s, void *ptr, size_t length)
 {
-	struct orbit_repr *record;
-	size_t rec_size = sizeof(struct orbit_repr) + length;
+	void *data;
+	struct orbit_repr *record = orbit_update_push_allocate(s, length, &data);
 
-	orbit_scratch_close_any(s);
-
-	if (rec_size > s->size_limit - s->cursor)
+	if (!record)
 		return NULL;	/* No enough space */
 
-	record = (struct orbit_repr*)((char*)s->ptr + s->cursor);
-
 	record->type = ORBIT_ANY;
-	record->any.length = length;
+	record->any = (struct orbit_any) { data, length };
 	// Act as preallocating fixed area
-	if (ptr) memcpy(record->any.data, ptr, length);
+	if (ptr) memcpy(data, ptr, length);
 
-	s->cursor += rec_size;
-	s->cursor = round_up_4(s->cursor);
-	++s->count;
-
-	return record->any.data;
+	return data;
 }
 
-int orbit_scratch_push_operation(struct orbit_scratch *s,
-		orbit_operation_func func, size_t argc, unsigned long argv[])
+int orbit_update_add_operation(struct orbit_update *s,
+		orbit_operation_func func, void *arg, size_t size)
 {
-	struct orbit_repr *record;
-	size_t length = argc * sizeof(*argv);
-	size_t rec_size = sizeof(struct orbit_repr) + length;
+	void *data;
+	struct orbit_repr *record = orbit_update_push_allocate(s, size, &data);
 
-	orbit_scratch_close_any(s);
-
-	if (rec_size > s->size_limit - s->cursor)
+	if (!record)
 		return -1;	/* No enough space */
 
-	record = (struct orbit_repr*)((char*)s->ptr + s->cursor);
-
 	record->type = ORBIT_OPERATION;
-	record->operation.func = func;
-	record->operation.argc = argc;
-	memcpy(record->operation.argv, argv, length);
+	record->operation = (struct orbit_operation) { func, data };
+	memcpy(data, arg, size);
 
-	s->cursor += rec_size;
-	s->cursor = round_up_4(s->cursor);
-
-	return ++s->count;
+	return s->updates->count;
 }
 
-static void scratch_trunc(const struct orbit_scratch *s)
+static void scratch_trunc(const struct orbit_update *s)
 {
-	struct orbit_pool *info_s = info.scratch_pool;
+	struct orbit_area *info_s = info.scratch_pool;
 
-	info_s->data_length += round_up_page(s->cursor);
+	orbit_allocator_destroy(s->area.alloc);
 
-	if (info_s->data_length == info_s->length) {
+	info_s->data_length = round_up_page(s->area.data_start
+			+ s->area.data_length - info_s->data_start);
+
+	if (info_s->data_length >= info_s->length) {
 		/* TODO: unmap safety in the kernel
 		 * If we decide to copy page range at recvv instead of at sendv,
 		 * we need to consider another mechanism to unmap pages. */
-		/* orbit_pool_destroy() */
+		/* orbit_area_destroy() */
 		/* munmap(info_s->ptr, info_s->size_limit); */
 		info.scratch_pool = NULL;
 		/* TODO: a mechanism to renew/auto create new pool? */
@@ -510,38 +571,79 @@ static void scratch_trunc(const struct orbit_scratch *s)
 	}
 }
 
-int orbit_sendv(struct orbit_scratch *s)
+struct orbit_result_kernel {
+	unsigned long retval;
+	void* data_start;
+	size_t data_length;
+	struct __orbit_block_list* updates;
+};
+
+int orbit_push(struct orbit_result *result)
 {
 	int ret;
-	struct orbit_scratch buf;
+	struct orbit_result_kernel buf;
 
-	orbit_scratch_close_any(s);
+	if (result->update == NULL)
+		return 0;
 
-	buf = (struct orbit_scratch) {
-		.ptr = s->ptr,
-		.cursor = 0,
-		.size_limit = round_up_page(s->cursor),
-		.count = s->count,
+	buf = (struct orbit_result_kernel) {
+		.retval = result->retval,
+		.data_start = result->update->area.data_start,
+		.data_length = round_up_page(result->update->area.data_length),
+		.updates = result->update->updates,
 	};
 
-	ret = syscall(SYS_ORBIT_SENDV, &buf);
+	ret = syscall(SYS_ORBIT_PUSH, &buf);
 	if (ret < 0)
 		return ret;
 
 	/* If the send is not successful, we do not call trunc(), and it is
 	 * safe to allocate a new scratch in the same area since we will
 	 * rewrite it later anyway. */
-	scratch_trunc(s);
+	scratch_trunc(result->update);
 
 	return ret;
 }
 
-int orbit_recvv(union orbit_result *result, struct orbit_task *task)
+int pull_orbit(struct orbit_result *result, struct orbit_future *future)
 {
-	int ret = syscall(SYS_ORBIT_RECVV, result, task->orbit->gobid,
-			  task->taskid);
-	if (ret == 1)
-		result->scratch.cursor = 0;
+	/* Currently, we still use the old underlying multi-return API, but
+	 * pack only one result for the `future' API. This could allow
+	 * multi-return in the future. */
+
+	/* for update */
+	struct orbit_result_kernel buf;
+	/* for retval */
+	struct orbit_result_kernel buf2;
+
+	*result = (struct orbit_result) { .retval = 0, .update = NULL, };
+
+	int ret = syscall(SYS_ORBIT_PULL, &buf, future->orbit->gobid,
+			  future->taskid);
+	if (ret == 1) {
+		int ret2 = syscall(SYS_ORBIT_PULL, &buf2, future->orbit->gobid,
+			  future->taskid);
+		if (ret2 != 0) {
+			fprintf(stderr, "ret2 is %d, expecting 0!", ret2);
+			abort();
+		}
+		*result = (struct orbit_result) {
+			.retval = buf2.retval,
+			.update = malloc(sizeof(struct orbit_area)),
+		};
+		result->update->updates = buf.updates;
+
+		orbit_area_init(&result->update->area,
+				buf.data_start, buf.data_length, ORBIT_MOVE);
+		result->update->area.data_length = buf.data_length;
+
+	} else if (ret == 0) {
+		*result = (struct orbit_result) {
+			.retval = buf2.retval,
+			.update = NULL,
+		};
+	}
+
 	return ret;
 }
 
@@ -555,7 +657,7 @@ int orbit_destroy_all()
 	return syscall(SYS_ORBIT_DESTROY_ALL);
 }
 
-bool orbit_exists(struct orbit_module *ob)
+bool orbit_exists(struct orbit *ob)
 {
 	int ret;
 	enum orbit_state state;
@@ -563,7 +665,7 @@ bool orbit_exists(struct orbit_module *ob)
 	return ret == 0 && state != ORBIT_DEAD;
 }
 
-bool orbit_gone(struct orbit_module *ob)
+bool orbit_gone(struct orbit *ob)
 {
 	int ret;
 	enum orbit_state state;
@@ -571,64 +673,56 @@ bool orbit_gone(struct orbit_module *ob)
 	return ret < 0 || state == ORBIT_DEAD;
 }
 
-enum orbit_type orbit_apply_one(struct orbit_scratch *s, bool yield)
+enum orbit_type orbit_apply_one(struct orbit_update *s, bool yield)
 {
 	const int DBG = 0;
-	if (DBG) fprintf(stderr, "Orbit: Applying scratch, total %lu\n", s->count);
+	struct __orbit_block_list *updates = s->updates;
 
-	if (s->count == 0)
+	if (DBG) fprintf(stderr, "Orbit: Applying scratch, total %lu\n", updates->count);
+
+	if (updates->count == 0)
 		return ORBIT_END;
 
-	struct orbit_repr *record = (struct orbit_repr*)((char*)s->ptr + s->cursor);
+	struct orbit_repr *record = orbit_update_front(s);
 	enum orbit_type type = record->type;
-	size_t extra_size = 0;
 
-	if (type == ORBIT_UPDATE) {
-		struct orbit_update *update = &record->update;
-		if (DBG) fprintf(stderr, "Orbit: Found update %p, %lu\n",
-				update->ptr, update->length);
+	if (type == ORBIT_MODIFY) {
+		struct orbit_modify *modify = &record->modify;
+		if (DBG) fprintf(stderr, "Orbit: Found modify %p, %lu\n",
+				modify->ptr, modify->length);
 
-		memcpy(update->ptr, update->data, update->length);
-
-		extra_size = update->length;
+		memcpy(modify->ptr, modify->data, modify->length);
 	} else if (type == ORBIT_OPERATION) {
 		unsigned long ret;
 		struct orbit_operation *op = &record->operation;
 
-		if (DBG) fprintf(stderr, "Orbit: Found operation %p, %lu\n",
-				op->func, op->argc);
+		if (DBG) fprintf(stderr, "Orbit: Found operation %p, %p\n",
+				op->func, op->arg);
 
 		/* TODO: send this back? */
-		ret = op->func(op->argc, op->argv);
+		ret = op->func(op->arg);
 		(void)ret;
-
-		extra_size = op->argc * sizeof(*op->argv);
 	} else if (type == ORBIT_ANY) {
 		if (yield)
 			return ORBIT_ANY;
 		/* Otherwise, skip this data. */
-		extra_size = record->any.length;
 	} else if (type == ORBIT_END) {
-		extra_size = 0;
 	} else {
 		if (DBG) fprintf(stderr, "Orbit: unsupported update type: %d\n", record->type);
 
 		return ORBIT_UNKNOWN;
 	}
 
-	s->cursor += sizeof(struct orbit_repr) + extra_size;
-	s->cursor = round_up_4(s->cursor);
-
-	--s->count;
+	orbit_update_pop(s);
 
 	if (DBG) fprintf(stderr, "Orbit: Applied one update normally\n");
 
 	return type;
 }
 
-enum orbit_type orbit_apply(struct orbit_scratch *s, bool yield)
+enum orbit_type orbit_apply(struct orbit_update *s, bool yield)
 {
-	while (s->count) {
+	while (s->updates->count) {
 		enum orbit_type type = orbit_apply_one(s, yield);
 
 		if ((type == ORBIT_END) || type == ORBIT_UNKNOWN ||
@@ -639,46 +733,25 @@ enum orbit_type orbit_apply(struct orbit_scratch *s, bool yield)
 	return ORBIT_END;
 }
 
-enum orbit_type orbit_skip_one(struct orbit_scratch *s, bool yield)
+enum orbit_type orbit_skip_one(struct orbit_update *s, bool yield)
 {
-	if (s->count == 0)
+	if (s->updates->count == 0)
 		return ORBIT_END;
 
-	struct orbit_repr *record = (struct orbit_repr*)((char*)s->ptr + s->cursor);
+	struct orbit_repr *record = orbit_update_front(s);
 	enum orbit_type type = record->type;
-	size_t extra_size;
 
-	switch (type) {
-	case ORBIT_UPDATE:
-		extra_size = record->update.length;
-		break;
-	case ORBIT_OPERATION:
-		extra_size = record->operation.argc *
-				sizeof(*record->operation.argv);
-		break;
-	case ORBIT_ANY:
-		if (yield)
-			return ORBIT_ANY;
-		extra_size = record->any.length;
-		break;
-	case ORBIT_END:
-		extra_size = 0;
-		break;
-	case ORBIT_UNKNOWN:
-	default:
-		return ORBIT_UNKNOWN;
-	}
+	if (type == ORBIT_ANY && yield)
+		return ORBIT_ANY;
 
-	s->cursor += sizeof(struct orbit_repr) + extra_size;
-	s->cursor = round_up_4(s->cursor);
-	--s->count;
+	orbit_update_pop(s);
 
 	return type;
 }
 
-enum orbit_type orbit_skip(struct orbit_scratch *s, bool yield)
+enum orbit_type orbit_skip(struct orbit_update *s, bool yield)
 {
-	while (s->count) {
+	while (s->updates->count) {
 		enum orbit_type type = orbit_skip_one(s, yield);
 
 		if (type == ORBIT_END || type == ORBIT_UNKNOWN ||
@@ -689,16 +762,16 @@ enum orbit_type orbit_skip(struct orbit_scratch *s, bool yield)
 	return ORBIT_END;
 }
 
-struct orbit_repr *orbit_scratch_first(struct orbit_scratch *s)
+struct orbit_repr *orbit_update_first(struct orbit_update *s)
 {
-	if (s->count == 0)
+	if (s->updates->count == 0)
 		return NULL;
 
-	struct orbit_repr *record = (struct orbit_repr*)((char*)s->ptr + s->cursor);
+	struct orbit_repr *record = orbit_update_front(s);
 
 	switch (record->type) {
 	case ORBIT_ANY:
-	case ORBIT_UPDATE:
+	case ORBIT_MODIFY:
 	case ORBIT_OPERATION:
 		return record;
 	case ORBIT_END:
@@ -708,13 +781,21 @@ struct orbit_repr *orbit_scratch_first(struct orbit_scratch *s)
 	}
 }
 
-struct orbit_repr *orbit_scratch_next(struct orbit_scratch *s)
+struct orbit_repr *orbit_update_next(struct orbit_update *s)
 {
 	orbit_skip_one(s, false);
-	return orbit_scratch_first(s);
+	return orbit_update_first(s);
 }
 
-int orbit_recvv_finish(struct orbit_scratch *s)
+bool orbit_update_empty(struct orbit_update *s) {
+	return s->updates->count == 0;
+}
+
+size_t orbit_update_size(struct orbit_update *s) {
+	return s->updates->count;
+}
+
+int orbit_pull_finish(struct orbit_update *s)
 {
 	/* return munmap(s->ptr, s->size_limit); */
 	(void)s;

@@ -1,4 +1,5 @@
 #include "orbit.h"
+#include "orbit_lowlevel.h"
 #include "linear_allocator.h"
 
 #include <stdio.h>
@@ -40,10 +41,12 @@ struct alloc_meta {
 extern struct orbit_allocator_vtable orbit_linear_allocator_vtable;
 
 struct orbit_allocator *orbit_linear_allocator_create(void *start, size_t length,
-		void **data_start, size_t *data_length, bool use_meta)
+		void **data_start, size_t *data_length,
+		const struct orbit_allocator_method *method)
 {
 	int ret;
 	struct orbit_linear_allocator* alloc;
+	const struct orbit_linear_allocator_method *options = (void*)method;
 
 	if (!data_length)
 		return NULL;
@@ -58,7 +61,7 @@ struct orbit_allocator *orbit_linear_allocator_create(void *start, size_t length
 	alloc->start = start;
 	alloc->length = length;
 	alloc->allocated = data_length;
-	alloc->use_meta = use_meta;
+	alloc->use_meta = options->use_meta;
 
 	if (data_start)
 		*data_start = start;
@@ -138,9 +141,33 @@ void *orbit_linear_realloc(struct orbit_allocator *base, void *oldptr, size_t ne
 	return mem;
 }
 
+bool orbit_linear_allocator_reset(struct orbit_allocator *base)
+{
+	struct orbit_linear_allocator *alloc;
+
+	if (base->vtable != &orbit_linear_allocator_vtable) {
+		fprintf(stderr, "liborbit: not a valid linear allocator!");
+		return false;
+	}
+
+	alloc = (struct orbit_linear_allocator*)base;
+	*alloc->allocated = 0;
+
+	return true;
+}
+
 struct orbit_allocator_vtable orbit_linear_allocator_vtable = {
 	.alloc = orbit_linear_alloc,
 	.free = orbit_linear_free,
 	.realloc = orbit_linear_realloc,
 	.destroy = orbit_linear_allocator_destroy,
 };
+
+static const struct orbit_linear_allocator_method orbit_linear_default_value = {
+	.method = (struct orbit_allocator_method) {
+		.__create = orbit_linear_allocator_create,
+	},
+	.use_meta = true,
+};
+const struct orbit_allocator_method *orbit_linear_default =
+		(struct orbit_allocator_method*) &orbit_linear_default_value;
